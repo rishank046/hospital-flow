@@ -1,0 +1,35 @@
+const query = `
+CREATE TABLE IF NOT EXISTS "User" (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS "Doctor" ( 
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    specialization VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    department VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS "Patient" (
+    id SERIAL PRIMARY KEY,
+    owner_user_id INT REFERENCES "User"(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    age INT NOT NULL,
+    gender VARCHAR(10) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    doctor_id INT REFERENCES "Doctor"(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS "Appointment" (
+    id SERIAL PRIMARY KEY,
+    start_time TIMESTAMP NOT NULL,
+    end_time TIMESTAMP NOT NULL,
+    patient_id INT REFERENCES "Patient"(id) ON DELETE CASCADE,
+    doctor_id INT REFERENCES "Doctor"(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+`
