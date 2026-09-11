@@ -33,3 +33,5 @@ CREATE TABLE IF NOT EXISTS "Appointment" (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 `
+
+export default query;

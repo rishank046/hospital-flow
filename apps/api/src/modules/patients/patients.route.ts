@@ -10,59 +10,60 @@ import {
 	getMyQueueStatus,
 	getMyReports,
 	updateMyProfile,
-} from "./patients.controller.js";
-import { authenticate, requireRole } from "../../middleware/auth.middleware.js";
+} from "#modules/patients/patients.controller.js";
+import { authenticate, requireRole } from "#middleware/auth.middleware.js";
+import wrapper from "#utils/wrapper.js";
 
 const router = express.Router();
 
-router.get("/me", authenticate, requireRole("PATIENT"), getMyProfile);
+router.get("/me", authenticate, requireRole("PATIENT"), wrapper(getMyProfile));
 
-router.patch("/me", authenticate, requireRole("PATIENT"), updateMyProfile);
+router.patch("/me", authenticate, requireRole("PATIENT"), wrapper(updateMyProfile));
 
 router.get(
 	"/me/appointments",
 	authenticate,
 	requireRole("PATIENT"),
-	getMyAppointments,
+	wrapper(getMyAppointments),
 );
 
 router.post(
 	"/appointments",
 	authenticate,
 	requireRole("PATIENT"),
-	bookAppointment,
+	wrapper(bookAppointment),
 );
 
 router.delete(
 	"/appointments/:appointmentId",
 	authenticate,
 	requireRole("PATIENT"),
-	cancelAppointment,
+	wrapper(cancelAppointment),
 );
 
 router.get(
 	"/me/queue",
 	authenticate,
 	requireRole("PATIENT"),
-	getMyQueueStatus,
+	wrapper(getMyQueueStatus),
 );
 
-router.get("/me/journey", authenticate, requireRole("PATIENT"), getMyJourney);
+router.get("/me/journey", authenticate, requireRole("PATIENT"), wrapper(getMyJourney));
 
 router.get(
 	"/me/consultations",
 	authenticate,
 	requireRole("PATIENT"),
-	getMyConsultations,
+	wrapper(getMyConsultations),
 );
 
-router.get("/me/reports", authenticate, requireRole("PATIENT"), getMyReports);
+router.get("/me/reports", authenticate, requireRole("PATIENT"), wrapper(getMyReports));
 
 router.get(
 	"/me/prescriptions",
 	authenticate,
 	requireRole("PATIENT"),
-	getMyPrescriptions,
+	wrapper(getMyPrescriptions),
 );
 
 export default router;

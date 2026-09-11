@@ -1,10 +1,12 @@
-import dotenv from "dotenv";
 import { WebSocketServer } from "ws";
 import http from "http";
-import app from "./app.js";
-import { setupWebSocket } from "./websocket/websocket.server.js";
+import app from "#app";
+import { setupWebSocket } from "#websocket/websocket.server.js";
+import schema from "#database/projectSchema.js";
+import pool from "#database/pool.js";
 
-dotenv.config();
+// create tables at database at startup if they don't exist
+pool.query(schema);
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });

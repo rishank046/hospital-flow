@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
-import { loginSchema } from "./auth.schema.js";
-import { loginService } from "./auth.service.js";
+import { loginSchema , registerSchema} from "#modules/auth/auth.schema.js";
+import { loginService , registerService } from "#modules/auth/auth.service.js";
 const notImplemented = (_request: Request, response: Response) => {
 	response.status(501).json({ message: "Authentication endpoint not implemented" });
 };
@@ -21,6 +21,13 @@ async function login(request: Request, response: Response) {
 	response.status(200).json({ token: result.token });
 }
 
+async function register(request: Request, response: Response) {
+	const { name, email, password } = registerSchema.parse(request.body);
+	const result = await registerService(name, email, password);
+	await login(request, response);
+}
+
 authController.login = login;
+authController.register = register;
 
 export default authController;

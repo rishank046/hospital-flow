@@ -13,94 +13,95 @@ import {
     updateConsultation,
     updateMyProfile,
     login
-} from './doctors.controller.js';
-import { authenticate, requireRole } from '../../middleware/auth.middleware.js';
+} from "#modules/doctors/doctors.controller.js";
+import { authenticate, requireRole } from "#middleware/auth.middleware.js";
+import wrapper from "#utils/wrapper.js";
 const router = express.Router();
 
-router.post("/login", login);
+router.post("/login", wrapper(login));
 
 router.get(
     "/me",
     authenticate,
     requireRole("DOCTOR"),
-    getMyProfile
+    wrapper(getMyProfile)
 );
 
 router.patch(
     "/me",
     authenticate,
     requireRole("DOCTOR"),
-    updateMyProfile
+    wrapper(updateMyProfile)
 );
 
 router.get(
     "/me/schedule",
     authenticate,
     requireRole("DOCTOR"),
-    getMySchedule
+    wrapper(getMySchedule)
 );
 
 router.get(
     "/me/queue",
     authenticate,
     requireRole("DOCTOR"),
-    getMyQueue
+    wrapper(getMyQueue)
 );
 
 router.get(
     "/me/patients",
     authenticate,
     requireRole("DOCTOR"),
-    getMyPatients
+    wrapper(getMyPatients)
 );
 
 router.get(
     "/patients/:patientId",
     authenticate,
     requireRole("DOCTOR"),
-    getPatient
+    wrapper(getPatient)
 );
 
 router.post(
     "/patients/:patientId/consultation",
     authenticate,
     requireRole("DOCTOR"),
-    createConsultation
+    wrapper(createConsultation)
 );
 
 router.patch(
     "/consultations/:consultationId",
     authenticate,
     requireRole("DOCTOR"),
-    updateConsultation
+    wrapper(updateConsultation)
 );
 
 router.post(
     "/patients/:patientId/orders",
     authenticate,
     requireRole("DOCTOR"),
-    createInvestigationOrder
+    wrapper(createInvestigationOrder)
 );
 
 router.get(
     "/patients/:patientId/reports",
     authenticate,
     requireRole("DOCTOR"),
-    getPatientReports
+    wrapper(getPatientReports)
 );
 
 router.post(
     "/queue/:queueEntryId/complete",
     authenticate,
     requireRole("DOCTOR"),
-    completeQueueEntry
+    wrapper(completeQueueEntry)
 );
 
 router.post(
     "/queue/:queueEntryId/skip",
     authenticate,
     requireRole("DOCTOR"),
-    skipQueueEntry
+    wrapper(skipQueueEntry)
 );
 
 export default router;
