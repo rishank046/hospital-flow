@@ -45,7 +45,17 @@ export async function authenticate(
             process.env.JWT_SECRET!
         );
 
-        request.tokenPayload = decodedToken as AuthPayload;
+        const payload = decodedToken as Record<string, unknown>;
+        const rawRole = (typeof payload["role"] === "string" ? payload["role"] : "PATIENT").toUpperCase();
+        const role = (rawRole === "USER" || rawRole === "ADMIN" || rawRole === "DOCTOR" || rawRole === "PATIENT" ? rawRole : "PATIENT") as AuthPayload["role"];
+        const userId = String(payload["userId"] ?? payload["id"] ?? "");
+        const email = String(payload["email"] ?? "");
+
+        request.tokenPayload = {
+            userId,
+            email,
+            role,
+        };
 
         next();
     } catch (error) {
@@ -55,10 +65,24 @@ export async function authenticate(
     }
 }
 
-export const requireRole = (_role: string): RequestHandler => (
-    _request: Request,
+export const requireRole = (role: "USER" | "ADMIN" | "DOCTOR" | "PATIENT"): RequestHandler => (
+    request: Request,
     response: Response,
-    _next: NextFunction,
+    next: NextFunction,
 ) => {
-    response.status(501).json({ message: "Role authorization middleware not implemented" });
+    if (!request.tokenPayload) {
+        response.status(401).json({ message: "Authentication required" });
+        return;
+    }
+
+    const userRole = request.tokenPayload.role;
+    const isPatientMatch = role === "PATIENT" && (userRole === "PATIENT" || userRole === "USER");
+    const isExactMatch = userRole === role;
+
+    if (!isPatientMatch && !isExactMatch) {
+        response.status(403).json({ message: "Forbidden: insufficient permissions" });
+        return;
+    }
+
+    next();
 };

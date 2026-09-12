@@ -6,7 +6,9 @@ import schema from "#database/projectSchema.js";
 import pool from "#database/pool.js";
 
 // create tables at database at startup if they don't exist
-pool.query(schema);
+pool.query(schema).catch((error) => {
+  console.error("Database schema initialization error:", error);
+});
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
