@@ -1,6 +1,10 @@
+import bcrypt from "bcrypt";
 import pool from "../../database/pool.js";
 import jwt from "jsonwebtoken";
 import { revokeToken } from "#utils/tokenRevocation.js";
+import { AppError } from "#utils/errorHandler.js";
+
+const SALT_ROUNDS = 10;
 
 type LoginResult = {
     token: string;
@@ -8,7 +12,6 @@ type LoginResult = {
 
 type RegisterResult = {
 	email: string;
-	password: string;
 };
 
 type LogoutResult = {
@@ -16,36 +19,44 @@ type LogoutResult = {
 };
 
 export async function loginService(email: string, password: string): Promise<LoginResult> {
-	const result = await pool.query(
-		'SELECT id, email, password FROM "User" WHERE email = $1 AND password = $2',
-		[email, password],
-	);
+const result = await pool.query(
+'SELECT id, email, password FROM "User" WHERE email = $1',
+        [email],
+    );
 
-	if (result.rowCount === 0 || !result.rows[0]) {
-		throw new Error("Invalid email or password");
-	}
+if (result.rowCount === 0 || !result.rows[0]) {
+throw new AppError("Invalid email or password", 401);
+    }
 
-	const user = result.rows[0];
-	const token = jwt.sign(
-		{ userId: user.id, email: user.email, role: "PATIENT" },
-		process.env.JWT_SECRET || "default_secret",
-		{ expiresIn: "4h" }
-	);
+const user = result.rows[0];
+const passwordMatch = await bcrypt.compare(password, user.password);
 
-	return { token };
+if (!passwordMatch) {
+throw new AppError("Invalid email or password", 401);
+    }
+
+const token = jwt.sign(
+        { userId: user.id, email: user.email, role: "PATIENT" },
+process.env.JWT_SECRET || "default_secret",
+        { expiresIn: "4h" }
+    );
+
+return { token };
 }
 
 export async function registerService(name: string, email: string, password: string): Promise<RegisterResult> {
+	const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
+
 	const result = await pool.query(
-		'INSERT INTO "User" (name, email, password) VALUES ($1, $2, $3) RETURNING id, email, password',
-		[name, email, password],
+		'INSERT INTO "User" (name, email, password) VALUES ($1, $2, $3) RETURNING id, email',
+		[name, email, hashedPassword],
 	);
 
 	if (result.rowCount === 0 || !result.rows[0]) {
 		throw new Error("Failed to register user");
 	}
 
-	return { email: result.rows[0].email, password: result.rows[0].password };
+	return { email: result.rows[0].email };
 }
 
 export async function logoutService(token: string): Promise<LogoutResult> {
