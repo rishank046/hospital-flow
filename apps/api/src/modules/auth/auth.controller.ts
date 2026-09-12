@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { loginSchema , registerSchema} from "#modules/auth/auth.schema.js";
-import { loginService , registerService } from "#modules/auth/auth.service.js";
+import { loginService, logoutService, registerService } from "#modules/auth/auth.service.js";
 const notImplemented = (_request: Request, response: Response) => {
 	response.status(501).json({ message: "Authentication endpoint not implemented" });
 };
@@ -27,7 +27,21 @@ async function register(request: Request, response: Response) {
 	await login(request, response);
 }
 
+async function logout(request: Request, response: Response) {
+	const authHeader = request.headers.authorization;
+	const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
+
+	if (!token) {
+		response.status(401).json({ message: "Authentication token missing" });
+		return;
+	}
+
+	const result = await logoutService(token);
+	response.status(200).json(result);
+}
+
 authController.login = login;
 authController.register = register;
+authController.logout = logout;
 
 export default authController;
