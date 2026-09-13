@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Calendar } from 'lucide-react';
 import type { Appointment } from '../../types/patient.types';
 import { Badge } from '../common/Badge';
 import { Button } from '../common/Button';
@@ -101,7 +102,9 @@ export function AppointmentList({
 
       {filteredAppointments.length === 0 ? (
         <div className="empty-data-state">
-          <span className="empty-icon" aria-hidden="true">📅</span>
+          <span className="empty-icon" aria-hidden="true">
+            <Calendar size={36} color="var(--muted)" aria-hidden="true" />
+          </span>
           <h3>No appointments found</h3>
           <p>
             {filter === 'ALL'

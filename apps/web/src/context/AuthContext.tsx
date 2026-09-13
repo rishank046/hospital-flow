@@ -61,6 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await authService.logout().catch(() => {});
       }
     } finally {
+      sessionStorage.removeItem('session_expired');
       clearAuth();
       window.history.pushState({}, '', '/login');
       window.dispatchEvent(new PopStateEvent('popstate'));
@@ -69,6 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const handleUnauthorized = () => {
+      sessionStorage.setItem('session_expired', 'true');
       clearAuth();
     };
 

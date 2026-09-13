@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
+import { X } from 'lucide-react';
 import type {
   CreateConsultationPayload,
   PrescriptionInput,
@@ -162,7 +163,7 @@ export function ConsultationModal({
                     onClick={() => removePrescription(idx)}
                     aria-label="Remove medication"
                   >
-                    ✕
+                    <X size={14} aria-hidden="true" />
                   </button>
                 </div>
               ))}

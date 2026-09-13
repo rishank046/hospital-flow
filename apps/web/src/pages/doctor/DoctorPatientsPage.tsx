@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Search, Users } from 'lucide-react';
 import { DashboardLayout } from '../../components/layout/DashboardLayout';
 import { Spinner } from '../../components/common/Spinner';
 import { Alert } from '../../components/common/Alert';
@@ -75,7 +76,7 @@ export function DoctorPatientsPage() {
           placeholder="Search patients by name, email, or UUID..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          leftIcon="🔍"
+          leftIcon={<Search size={16} color="var(--muted)" aria-hidden="true" />}
         />
       </div>
 
@@ -89,7 +90,9 @@ export function DoctorPatientsPage() {
         <Spinner label="Loading assigned patient roster..." />
       ) : filtered.length === 0 ? (
         <div className="empty-data-state">
-          <span className="empty-icon" aria-hidden="true">👥</span>
+          <span className="empty-icon" aria-hidden="true">
+            <Users size={36} color="var(--muted)" aria-hidden="true" />
+          </span>
           <h3>No patients found</h3>
           <p>
             {search

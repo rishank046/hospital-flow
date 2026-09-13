@@ -1,3 +1,4 @@
+import { Pill } from 'lucide-react';
 import type { Prescription } from '../../types/patient.types';
 import { Card } from '../common/Card';
 import { Badge } from '../common/Badge';
@@ -21,7 +22,9 @@ export function PrescriptionCard({ prescription }: PrescriptionCardProps) {
       header={
         <div className="prescription-header">
           <div className="medication-title-wrap">
-            <span className="medication-icon" aria-hidden="true">💊</span>
+            <span className="medication-icon" aria-hidden="true">
+              <Pill size={16} color="var(--aqua-strong)" aria-hidden="true" />
+            </span>
             <h4 className="medication-name">{prescription.medication}</h4>
           </div>
           <Badge variant="primary" size="sm">

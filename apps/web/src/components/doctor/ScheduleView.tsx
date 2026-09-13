@@ -1,3 +1,4 @@
+import { Calendar } from 'lucide-react';
 import type { ScheduleItem } from '../../types/doctor.types';
 import { Spinner } from '../common/Spinner';
 import { Alert } from '../common/Alert';
@@ -34,7 +35,9 @@ export function ScheduleView({
   if (!schedule || schedule.length === 0) {
     return (
       <div className="empty-data-state">
-        <span className="empty-icon" aria-hidden="true">📅</span>
+        <span className="empty-icon" aria-hidden="true">
+          <Calendar size={36} color="var(--muted)" aria-hidden="true" />
+        </span>
         <h3>No appointments scheduled</h3>
         <p>You have no scheduled patient consultations for this day.</p>
       </div>

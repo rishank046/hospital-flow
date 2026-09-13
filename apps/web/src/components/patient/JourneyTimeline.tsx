@@ -1,3 +1,4 @@
+import { Activity } from 'lucide-react';
 import type { JourneyEvent } from '../../types/patient.types';
 import { Spinner } from '../common/Spinner';
 import { Alert } from '../common/Alert';
@@ -31,7 +32,9 @@ export function JourneyTimeline({
   if (!events || events.length === 0) {
     return (
       <div className="empty-data-state">
-        <span className="empty-icon" aria-hidden="true">⤳</span>
+        <span className="empty-icon" aria-hidden="true">
+          <Activity size={36} color="var(--muted)" aria-hidden="true" />
+        </span>
         <h3>No journey milestones yet</h3>
         <p>
           Your care journey milestones, consultations, and test updates will appear

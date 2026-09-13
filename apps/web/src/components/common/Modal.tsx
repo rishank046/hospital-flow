@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import type { ReactNode } from 'react';
+import { X } from 'lucide-react';
 
 export interface ModalProps {
   isOpen: boolean;
@@ -49,7 +50,7 @@ export function Modal({ isOpen, onClose, title, children, footer }: ModalProps) 
             onClick={onClose}
             aria-label="Close dialog"
           >
-            ✕
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
 
