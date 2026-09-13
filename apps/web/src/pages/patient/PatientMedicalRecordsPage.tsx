@@ -45,7 +45,32 @@ export function PatientMedicalRecordsPage() {
   };
 
   useEffect(() => {
-    void loadRecords();
+    let isMounted = true;
+    Promise.all([
+      patientService.getPrescriptions().catch(() => []),
+      patientService.getConsultations().catch(() => []),
+      patientService.getReports().catch(() => []),
+    ])
+      .then(([rxData, consultData, reportData]) => {
+        if (!isMounted) return;
+        setPrescriptions(rxData);
+        setConsultations(consultData);
+        setReports(reportData);
+      })
+      .catch((err) => {
+        if (isMounted) {
+          setError(
+            err instanceof Error ? err.message : 'Failed to load medical records.'
+          );
+        }
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   return (
@@ -133,9 +158,9 @@ export function PatientMedicalRecordsPage() {
                         </div>
                       }
                       footer={
-                        c.doctorName && (
+                        (c.doctorName || c.doctor_name) && (
                           <span className="text-muted text-sm">
-                            Attending: Dr. {c.doctorName}
+                            Attending: Dr. {c.doctorName || c.doctor_name}
                           </span>
                         )
                       }

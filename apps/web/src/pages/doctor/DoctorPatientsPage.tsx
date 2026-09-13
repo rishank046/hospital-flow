@@ -30,7 +30,26 @@ export function DoctorPatientsPage() {
   };
 
   useEffect(() => {
-    void fetchPatients();
+    let isMounted = true;
+    doctorService
+      .getPatients()
+      .then((data) => {
+        if (isMounted) setPatients(data);
+      })
+      .catch((err) => {
+        if (isMounted) {
+          setError(
+            err instanceof Error ? err.message : 'Failed to load assigned patients.'
+          );
+        }
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const filtered = patients.filter((p) => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { DashboardLayout } from '../../components/layout/DashboardLayout';
 import { PatientHistory } from '../../components/doctor/PatientHistory';
 import { ConsultationModal } from '../../components/doctor/ConsultationModal';
@@ -27,7 +27,7 @@ export function DoctorPatientDetailPage({ patientId }: DoctorPatientDetailPagePr
   const [isConsultOpen, setIsConsultOpen] = useState(false);
   const [isOrderOpen, setIsOrderOpen] = useState(false);
 
-  const loadPatientDetail = async () => {
+  const loadPatientDetail = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -40,10 +40,29 @@ export function DoctorPatientDetailPage({ patientId }: DoctorPatientDetailPagePr
     } finally {
       setLoading(false);
     }
-  };
+  }, [patientId]);
 
   useEffect(() => {
-    void loadPatientDetail();
+    let isMounted = true;
+    doctorService
+      .getPatientDetail(patientId)
+      .then((data) => {
+        if (isMounted) setDetail(data);
+      })
+      .catch((err) => {
+        if (isMounted) {
+          setError(
+            err instanceof Error ? err.message : 'Failed to load patient records.'
+          );
+        }
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, [patientId]);
 
   const handleCreateConsultation = async (payload: CreateConsultationPayload) => {

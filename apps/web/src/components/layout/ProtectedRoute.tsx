@@ -1,5 +1,4 @@
-import { useEffect, useRef } from 'react';
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 
 interface ProtectedRouteProps {
@@ -9,11 +8,10 @@ interface ProtectedRouteProps {
 
 export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
   const { isAuthenticated, role, loading } = useAuth();
-  const is401Ref = useRef(false);
 
   useEffect(() => {
     const handleUnauthorized = () => {
-      is401Ref.current = true;
+      sessionStorage.setItem('session_expired', 'true');
     };
 
     window.addEventListener('auth:unauthorized', handleUnauthorized);
@@ -22,16 +20,15 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
     };
   }, []);
 
-  if (loading) {
-    return <div className="loading-screen">Loading session...</div>;
-  }
-
-  if (!isAuthenticated) {
-    if (is401Ref.current || sessionStorage.getItem('session_expired') === 'true') {
-      sessionStorage.setItem('session_expired', 'true');
+  useEffect(() => {
+    if (!loading && !isAuthenticated) {
+      window.history.pushState({}, '', '/login');
+      window.dispatchEvent(new PopStateEvent('popstate'));
     }
-    window.location.href = '/login';
-    return null;
+  }, [loading, isAuthenticated]);
+
+  if (loading || !isAuthenticated) {
+    return <div className="loading-screen">Loading session...</div>;
   }
 
   if (allowedRoles && (!role || !allowedRoles.includes(role))) {
