@@ -57,24 +57,7 @@ export function LoginPage() {
     setLoading(true);
 
     try {
-      if (accountType === 'doctor') {
-        const response = await authService.doctorLogin({
-          email: email.trim(),
-          password,
-        });
-
-        login(response.token, 'DOCTOR', {
-          id: response.doctor?.id,
-          name: response.doctor?.name,
-          email: response.doctor?.email || email.trim(),
-          role: 'DOCTOR',
-          specialization: response.doctor?.specialization,
-          department: response.doctor?.department,
-        });
-
-        window.history.pushState({}, '', '/doctor');
-        window.dispatchEvent(new PopStateEvent('popstate'));
-      } else if (mode === 'register') {
+      if (mode === 'register') {
         const response = await authService.register({
           name: name.trim(),
           email: email.trim(),
@@ -90,19 +73,78 @@ export function LoginPage() {
 
         window.history.pushState({}, '', '/patient');
         window.dispatchEvent(new PopStateEvent('popstate'));
+        return;
+      }
+
+      let response;
+      if (accountType === 'doctor') {
+        try {
+          response = await authService.doctorLogin({
+            email: email.trim(),
+            password,
+          });
+        } catch {
+          // Fallback to unified login
+          response = await authService.login({
+            email: email.trim(),
+            password,
+          });
+        }
       } else {
-        const response = await authService.login({
+        response = await authService.login({
           email: email.trim(),
           password,
         });
+      }
 
+      const userRole = response.user?.role?.toUpperCase();
+      const staffRole = (response.user?.staffRole || response.staff?.role)?.toUpperCase();
+      const isDoctor =
+        userRole === 'DOCTOR' ||
+        (userRole === 'STAFF' && staffRole === 'DOCTOR') ||
+        Boolean(response.doctor);
+      const isStaff = userRole === 'STAFF' && !isDoctor;
+      const isAdmin = userRole === 'ADMIN';
+
+      if (isDoctor) {
+        login(response.token, 'DOCTOR', {
+          id: response.doctor?.id || response.user?.id,
+          name: response.doctor?.name || response.user?.name,
+          email: response.doctor?.email || response.user?.email || email.trim(),
+          role: 'DOCTOR',
+          staffRole: 'DOCTOR',
+          specialization: response.doctor?.specialization,
+          department: response.doctor?.department,
+        });
+        window.history.pushState({}, '', '/doctor');
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      } else if (isStaff) {
+        login(response.token, 'STAFF', {
+          id: response.staff?.id || response.user?.id,
+          name: response.user?.name || 'Staff Member',
+          email: response.user?.email || email.trim(),
+          role: 'STAFF',
+          staffRole: (staffRole as any) || 'RECEPTIONIST',
+          employeeCode: response.staff?.employeeCode,
+        });
+        window.history.pushState({}, '', '/staff');
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      } else if (isAdmin) {
+        login(response.token, 'ADMIN', {
+          id: response.user?.id,
+          name: response.user?.name || 'Admin',
+          email: response.user?.email || email.trim(),
+          role: 'ADMIN',
+        });
+        window.history.pushState({}, '', '/admin');
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      } else {
         login(response.token, 'PATIENT', {
           id: response.user?.id,
           name: response.user?.name || name.trim() || 'Patient',
-          email: email.trim(),
+          email: response.user?.email || email.trim(),
           role: 'PATIENT',
         });
-
         window.history.pushState({}, '', '/patient');
         window.dispatchEvent(new PopStateEvent('popstate'));
       }

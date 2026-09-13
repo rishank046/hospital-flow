@@ -101,7 +101,7 @@ export function AppointmentList({
 
       {filteredAppointments.length === 0 ? (
         <div className="empty-data-state">
-          <span className="empty-icon" aria-hidden="true">📅</span>
+          <span className="empty-icon" aria-hidden="true">◷</span>
           <h3>No appointments found</h3>
           <p>
             {filter === 'ALL'

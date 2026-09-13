@@ -35,7 +35,7 @@ export function PatientHistory({
   if (consultations.length === 0 && orders.length === 0) {
     return (
       <div className="empty-data-state">
-        <span className="empty-icon" aria-hidden="true">📋</span>
+        <span className="empty-icon" aria-hidden="true">≡</span>
         <h3>No past medical history recorded</h3>
         <p>This patient has no previous consultations or investigation orders recorded.</p>
       </div>

@@ -20,6 +20,26 @@ const patientEmail = `pat_${Date.now()}@example.com`;
 const patientPassword = "patientPassword123";
 const jwtSecret = process.env.JWT_SECRET;
 
+let adminToken: string;
+let adminId: string;
+const adminEmail = `admin_${Date.now()}@example.com`;
+const adminPassword = "adminPassword123!";
+
+let otherUserToken: string;
+let otherUserId: string;
+const otherUserEmail = `other_${Date.now()}@example.com`;
+
+let secondPatientId: string;
+let walkInQueueEntryId: string;
+let emergencyQueueEntryId: string;
+
+let createdStaffId: string;
+let createdStaffUserId: string;
+let nurseToken: string;
+
+let createdAdminDoctorId: string;
+let createdAdminDoctorUserId: string;
+
 let createdAppointmentId: string;
 let createdConsultationId: string;
 
@@ -36,6 +56,10 @@ beforeAll(async () => {
         });
     });
 
+    if (!jwtSecret) {
+        throw new Error("JWT_SECRET must be set for tests");
+    }
+
     // Seed a Doctor
     const hashedPassword = await bcrypt.hash(doctorPassword, 10);
     const docRes = await pool.query(
@@ -48,8 +72,8 @@ beforeAll(async () => {
 
     // Seed a User
     const userRes = await pool.query(
-        `INSERT INTO "User" (name, email, password)
-         VALUES ($1, $2, $3)
+        `INSERT INTO "User" (name, email, password, role)
+         VALUES ($1, $2, $3, 'USER')
          RETURNING id, name, email`,
         ["John Connor", patientEmail, patientPassword]
     );
@@ -65,27 +89,84 @@ beforeAll(async () => {
     patientId = patRes.rows[0].id;
 
     // Patient JWT
-    if (!jwtSecret) {
-        throw new Error("JWT_SECRET must be set for tests");
-    }
-
     patientToken = jwt.sign(
-        { userId, email: patientEmail, role: "PATIENT" },
+        { userId, email: patientEmail, role: "USER" },
+        jwtSecret,
+        { expiresIn: "4h" }
+    );
+
+    // Seed an Admin
+    const hashedAdminPassword = await bcrypt.hash(adminPassword, 10);
+    const adminRes = await pool.query(
+        `INSERT INTO "Admin" (name, email, password)
+         VALUES ($1, $2, $3)
+         RETURNING id, name, email`,
+        ["System Administrator", adminEmail, hashedAdminPassword]
+    );
+    adminId = adminRes.rows[0].id;
+    adminToken = jwt.sign(
+        { userId: adminId, email: adminEmail, role: "ADMIN" },
+        jwtSecret,
+        { expiresIn: "4h" }
+    );
+
+    // Seed another User for ownership & authorization checks
+    const otherUserRes = await pool.query(
+        `INSERT INTO "User" (name, email, password, role)
+         VALUES ($1, $2, $3, 'USER')
+         RETURNING id, name, email`,
+        ["Jane Smith", otherUserEmail, patientPassword]
+    );
+    otherUserId = otherUserRes.rows[0].id;
+    otherUserToken = jwt.sign(
+        { userId: otherUserId, email: otherUserEmail, role: "USER" },
         jwtSecret,
         { expiresIn: "4h" }
     );
 });
 
 afterAll(async () => {
-    // Cleanup seeded data
+    // Cleanup any created queue entries
+    if (doctorId) {
+        await pool.query('DELETE FROM "QueueEntry" WHERE doctor_id = $1', [doctorId]);
+    }
+    if (createdAdminDoctorId) {
+        await pool.query('DELETE FROM "QueueEntry" WHERE doctor_id = $1', [createdAdminDoctorId]);
+        await pool.query('DELETE FROM "Doctor" WHERE id = $1', [createdAdminDoctorId]);
+    }
+    if (createdAdminDoctorUserId) {
+        await pool.query('DELETE FROM "Staff" WHERE user_id = $1', [createdAdminDoctorUserId]);
+        await pool.query('DELETE FROM "User" WHERE id = $1', [createdAdminDoctorUserId]);
+    }
+    if (createdStaffUserId) {
+        await pool.query('DELETE FROM "Staff" WHERE user_id = $1', [createdStaffUserId]);
+        await pool.query('DELETE FROM "User" WHERE id = $1', [createdStaffUserId]);
+    }
+    if (secondPatientId) {
+        await pool.query('DELETE FROM "QueueEntry" WHERE patient_id = $1', [secondPatientId]);
+        await pool.query('DELETE FROM "Patient" WHERE id = $1', [secondPatientId]);
+    }
     if (patientId) {
+        await pool.query('DELETE FROM "QueueEntry" WHERE patient_id = $1', [patientId]);
+        await pool.query('DELETE FROM "Prescription" WHERE consultation_id IN (SELECT id FROM "Consultation" WHERE patient_id = $1)', [patientId]);
+        await pool.query('DELETE FROM "Consultation" WHERE patient_id = $1', [patientId]);
+        await pool.query('DELETE FROM "InvestigationOrder" WHERE patient_id = $1', [patientId]);
+        await pool.query('DELETE FROM "Appointment" WHERE patient_id = $1', [patientId]);
         await pool.query('DELETE FROM "Patient" WHERE id = $1', [patientId]);
     }
     if (userId) {
+        await pool.query('DELETE FROM "Patient" WHERE owner_user_id = $1', [userId]);
         await pool.query('DELETE FROM "User" WHERE id = $1', [userId]);
+    }
+    if (otherUserId) {
+        await pool.query('DELETE FROM "Patient" WHERE owner_user_id = $1', [otherUserId]);
+        await pool.query('DELETE FROM "User" WHERE id = $1', [otherUserId]);
     }
     if (doctorId) {
         await pool.query('DELETE FROM "Doctor" WHERE id = $1', [doctorId]);
+    }
+    if (adminId) {
+        await pool.query('DELETE FROM "Admin" WHERE id = $1', [adminId]);
     }
 
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -382,56 +463,422 @@ describe("Appointment Cancellation", () => {
     });
 });
 
-describe("Queue Endpoints Preservation", () => {
-    it("GET /patients/me/queue - should return 501 Not Implemented", async () => {
+describe("Queue Lifecycle & Dynamic Prioritization", () => {
+    it("POST /queue/join - should join queue as WALK_IN patient", async () => {
+        const res = await fetch(`${baseUrl}/queue/join`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${patientToken}`,
+            },
+            body: JSON.stringify({
+                patientId,
+                doctorId,
+                type: "WALK_IN",
+                priority: 1,
+            }),
+        });
+
+        expect(res.status).toBe(201);
+        const data = await res.json();
+        expect(data).toHaveProperty("id");
+        expect(data.patient_id).toBe(patientId);
+        expect(data.doctor_id).toBe(doctorId);
+        expect(data.type).toBe("WALK_IN");
+        expect(data.status).toBe("WAITING");
+
+        walkInQueueEntryId = data.id;
+    });
+
+    it("POST /queue/join - should join queue as EMERGENCY patient with higher priority", async () => {
+        const pRes = await fetch(`${baseUrl}/patients`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${patientToken}`,
+            },
+            body: JSON.stringify({
+                name: "Emergency Patient",
+                age: 45,
+                gender: "Female",
+                patientType: "Online",
+            }),
+        });
+        expect(pRes.status).toBe(201);
+        const pData = await pRes.json();
+        secondPatientId = pData.id;
+
+        const res = await fetch(`${baseUrl}/queue/join`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${patientToken}`,
+            },
+            body: JSON.stringify({
+                patientId: secondPatientId,
+                doctorId,
+                type: "EMERGENCY",
+                priority: 10,
+            }),
+        });
+
+        expect(res.status).toBe(201);
+        const data = await res.json();
+        expect(data.type).toBe("EMERGENCY");
+        expect(data.priority).toBe(10);
+        expect(data.status).toBe("WAITING");
+
+        emergencyQueueEntryId = data.id;
+    });
+
+    it("GET /queue - should sort entries by priority descending (Emergency before Walk-in)", async () => {
+        const res = await fetch(`${baseUrl}/queue?doctorId=${doctorId}`, {
+            headers: { Authorization: `Bearer ${doctorToken}` },
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(Array.isArray(data.queue)).toBe(true);
+        expect(data.queue.length).toBeGreaterThanOrEqual(2);
+        // First entry should be emergency due to priority 10 vs 1
+        expect(data.queue[0].id).toBe(emergencyQueueEntryId);
+        expect(data.queue[0].type).toBe("EMERGENCY");
+    });
+
+    it("GET /patients/me/queue - patient should view active queue status", async () => {
         const res = await fetch(`${baseUrl}/patients/me/queue`, {
             headers: { Authorization: `Bearer ${patientToken}` },
         });
 
-        expect(res.status).toBe(501);
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data).toHaveProperty("queueEntry");
+        expect(data.queueEntry).not.toBeNull();
+        expect([walkInQueueEntryId, emergencyQueueEntryId]).toContain(data.queueEntry.id);
     });
 
-    it("GET /doctors/me/queue - should return 501 Not Implemented", async () => {
+    it("GET /doctors/me/queue - doctor should view queue overview", async () => {
         const res = await fetch(`${baseUrl}/doctors/me/queue`, {
             headers: { Authorization: `Bearer ${doctorToken}` },
         });
 
-        expect(res.status).toBe(501);
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data).toHaveProperty("queue");
+        expect(Array.isArray(data.queue)).toBe(true);
+        expect(data.queue.length).toBeGreaterThanOrEqual(2);
     });
 
-    it("POST /doctors/queue/123/complete - should return 501 Not Implemented", async () => {
-        const res = await fetch(`${baseUrl}/doctors/queue/123/complete`, {
+    it("POST /queue/doctor/call-next - doctor calls next highest-priority patient (CALLED)", async () => {
+        const res = await fetch(`${baseUrl}/queue/doctor/call-next`, {
             method: "POST",
             headers: { Authorization: `Bearer ${doctorToken}` },
         });
 
-        expect(res.status).toBe(501);
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data).toHaveProperty("next");
+        expect(data.next.id).toBe(emergencyQueueEntryId);
+        expect(data.next.status).toBe("CALLED");
     });
 
-    it("POST /doctors/queue/123/skip - should return 501 Not Implemented", async () => {
-        const res = await fetch(`${baseUrl}/doctors/queue/123/skip`, {
+    it("POST /queue/:queueEntryId/start - doctor starts serving patient (SERVING)", async () => {
+        const res = await fetch(`${baseUrl}/queue/${emergencyQueueEntryId}/start`, {
             method: "POST",
             headers: { Authorization: `Bearer ${doctorToken}` },
         });
 
-        expect(res.status).toBe(501);
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.status).toBe("SERVING");
+    });
+
+    it("POST /doctors/queue/:queueEntryId/complete - doctor completes consultation (COMPLETED)", async () => {
+        const res = await fetch(`${baseUrl}/doctors/queue/${emergencyQueueEntryId}/complete`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${doctorToken}` },
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.status).toBe("COMPLETED");
+    });
+
+    it("POST /doctors/queue/:queueEntryId/skip - doctor skips walk-in patient (SKIPPED)", async () => {
+        const res = await fetch(`${baseUrl}/doctors/queue/${walkInQueueEntryId}/skip`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${doctorToken}` },
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.status).toBe("SKIPPED");
     });
 });
 
-describe("Role-Based Authorization Enforcement", () => {
-    it("Patient token cannot access doctor-only routes", async () => {
-        const res = await fetch(`${baseUrl}/doctors/me`, {
+describe("Patient Creation & Profile Ownership Flow", () => {
+    let familyPatientId: string;
+
+    it("POST /patients - user creates a family member patient profile", async () => {
+        const res = await fetch(`${baseUrl}/patients`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${patientToken}`,
+            },
+            body: JSON.stringify({
+                name: "Tommy Connor",
+                age: 8,
+                gender: "Male",
+                patientType: "Online",
+            }),
+        });
+
+        expect(res.status).toBe(201);
+        const data = await res.json();
+        expect(data.name).toBe("Tommy Connor");
+        expect(data.owner_user_id).toBe(userId);
+        familyPatientId = data.id;
+    });
+
+    it("GET /patients - owner lists all managed patient profiles", async () => {
+        const res = await fetch(`${baseUrl}/patients`, {
             headers: { Authorization: `Bearer ${patientToken}` },
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(Array.isArray(data.patients)).toBe(true);
+        expect(data.patients.some((p: any) => p.id === familyPatientId)).toBe(true);
+    });
+
+    it("GET /patients/byId/:patientId - owner retrieves patient profile", async () => {
+        const res = await fetch(`${baseUrl}/patients/byId/${familyPatientId}`, {
+            headers: { Authorization: `Bearer ${patientToken}` },
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.id).toBe(familyPatientId);
+        expect(data.name).toBe("Tommy Connor");
+    });
+
+    it("PATCH /patients/byId/:patientId - owner updates patient profile", async () => {
+        const res = await fetch(`${baseUrl}/patients/byId/${familyPatientId}`, {
+            method: "PATCH",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${patientToken}`,
+            },
+            body: JSON.stringify({
+                age: 9,
+            }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.age).toBe(9);
+    });
+
+    it("GET /patients/byId/:patientId - other user cannot access patient profile (ownership enforcement)", async () => {
+        const res = await fetch(`${baseUrl}/patients/byId/${familyPatientId}`, {
+            headers: { Authorization: `Bearer ${otherUserToken}` },
         });
 
         expect(res.status).toBe(403);
     });
 
-    it("Doctor token cannot access patient-only routes", async () => {
-        const res = await fetch(`${baseUrl}/patients/me`, {
-            headers: { Authorization: `Bearer ${doctorToken}` },
+    it("PATCH /patients/byId/:patientId - other user cannot modify patient profile (ownership enforcement)", async () => {
+        const res = await fetch(`${baseUrl}/patients/byId/${familyPatientId}`, {
+            method: "PATCH",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${otherUserToken}`,
+            },
+            body: JSON.stringify({
+                name: "Hacked Name",
+            }),
         });
 
         expect(res.status).toBe(403);
+    });
+});
+
+describe("Staff Administration & Role Enforcement Flow", () => {
+    const nurseEmail = `nurse_${Date.now()}@example.com`;
+    const nursePassword = "NursePassword123!";
+
+    it("POST /admin/staff - admin creates staff member (NURSE)", async () => {
+        const res = await fetch(`${baseUrl}/admin/staff`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${adminToken}`,
+            },
+            body: JSON.stringify({
+                name: "Nurse Florence",
+                email: nurseEmail,
+                password: nursePassword,
+                employeeCode: `NURSE-${Date.now().toString().slice(-6)}`,
+                role: "NURSE",
+                status: "ACTIVE",
+            }),
+        });
+
+        expect(res.status).toBe(201);
+        const data = await res.json();
+        expect(data).toHaveProperty("staff");
+        expect(data.staff.role).toBe("NURSE");
+        expect(data).toHaveProperty("user");
+
+        createdStaffId = data.staff.id;
+        createdStaffUserId = data.user.id;
+
+        nurseToken = jwt.sign(
+            { userId: createdStaffUserId, email: nurseEmail, role: "STAFF", staffRole: "NURSE" },
+            jwtSecret!,
+            { expiresIn: "4h" }
+        );
+    });
+
+    it("GET /staff/me - staff member retrieves own staff profile", async () => {
+        const res = await fetch(`${baseUrl}/staff/me`, {
+            headers: { Authorization: `Bearer ${nurseToken}` },
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.staff_role).toBe("NURSE");
+        expect(data.email).toBe(nurseEmail);
+    });
+
+    it("GET /doctors/me - non-doctor staff cannot access clinical doctor routes", async () => {
+        const res = await fetch(`${baseUrl}/doctors/me`, {
+            headers: { Authorization: `Bearer ${nurseToken}` },
+        });
+
+        expect(res.status).toBe(403);
+    });
+
+    it("GET /admin/staff - non-admin staff cannot access admin routes", async () => {
+        const res = await fetch(`${baseUrl}/admin/staff`, {
+            headers: { Authorization: `Bearer ${nurseToken}` },
+        });
+
+        expect(res.status).toBe(403);
+    });
+});
+
+describe("Doctor Creation via Admin & Department Hierarchy", () => {
+    const newDocEmail = `doc_admin_${Date.now()}@example.com`;
+    const newDocPassword = "NewDoctorPassword123!";
+    let newDoctorToken: string;
+
+    it("POST /admin/doctors - admin creates doctor with department", async () => {
+        const res = await fetch(`${baseUrl}/admin/doctors`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${adminToken}`,
+            },
+            body: JSON.stringify({
+                name: "Dr. Gregory House",
+                email: newDocEmail,
+                password: newDocPassword,
+                specialization: "Neurology",
+                department: "Neurology Department",
+            }),
+        });
+
+        expect(res.status).toBe(201);
+        const data = await res.json();
+        expect(data.name).toBe("Dr. Gregory House");
+        expect(data.specialization).toBe("Neurology");
+        expect(data.department).toBe("Neurology Department");
+
+        createdAdminDoctorId = data.id;
+
+        // Find user ID for cleanup
+        const u = await pool.query<{ user_id: string }>(
+            'SELECT s.user_id FROM "Staff" s JOIN "Doctor" d ON d.staff_id = s.id WHERE d.id = $1',
+            [createdAdminDoctorId]
+        );
+        if (u.rows[0]) {
+            createdAdminDoctorUserId = u.rows[0].user_id;
+        }
+    });
+
+    it("POST /doctors/login - newly created doctor can log in", async () => {
+        const res = await fetch(`${baseUrl}/doctors/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                email: newDocEmail,
+                password: newDocPassword,
+            }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data).toHaveProperty("token");
+        newDoctorToken = data.token;
+    });
+
+    it("GET /doctors/me - new doctor accesses profile with department resolution", async () => {
+        const res = await fetch(`${baseUrl}/doctors/me`, {
+            headers: { Authorization: `Bearer ${newDoctorToken}` },
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.id).toBe(createdAdminDoctorId);
+        expect(data.specialization).toBe("Neurology");
+        expect(data.department).toBe("Neurology Department");
+    });
+});
+
+describe("Comprehensive Role-Based Authorization Enforcement", () => {
+    it("Patient token cannot access doctor-only routes (GET /doctors/me)", async () => {
+        const res = await fetch(`${baseUrl}/doctors/me`, {
+            headers: { Authorization: `Bearer ${patientToken}` },
+        });
+        expect(res.status).toBe(403);
+    });
+
+    it("Patient token cannot access admin-only routes (GET /admin/doctors)", async () => {
+        const res = await fetch(`${baseUrl}/admin/doctors`, {
+            headers: { Authorization: `Bearer ${patientToken}` },
+        });
+        expect(res.status).toBe(403);
+    });
+
+    it("Doctor token cannot access patient-only profile route (GET /patients/me)", async () => {
+        const res = await fetch(`${baseUrl}/patients/me`, {
+            headers: { Authorization: `Bearer ${doctorToken}` },
+        });
+        expect(res.status).toBe(403);
+    });
+
+    it("Doctor token cannot access admin-only staff routes (POST /admin/staff)", async () => {
+        const res = await fetch(`${baseUrl}/admin/staff`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${doctorToken}`,
+            },
+            body: JSON.stringify({
+                name: "Intruder Staff",
+                email: "intruder@example.com",
+                password: "Password123!",
+                employeeCode: "INT-001",
+                role: "RECEPTIONIST",
+            }),
+        });
+        expect(res.status).toBe(403);
+    });
+
+    it("Unauthenticated request cannot access protected route (GET /staff/me)", async () => {
+        const res = await fetch(`${baseUrl}/staff/me`);
+        expect(res.status).toBe(401);
     });
 });

@@ -32,7 +32,7 @@ export function ReportViewer({
   if (!reports || reports.length === 0) {
     return (
       <div className="empty-data-state">
-        <span className="empty-icon" aria-hidden="true">🔬</span>
+        <span className="empty-icon" aria-hidden="true">◈</span>
         <h3>No lab reports available</h3>
         <p>Your lab investigations, test orders, and results will appear here.</p>
       </div>

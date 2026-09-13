@@ -12,13 +12,17 @@ import {
     skipQueueEntry,
     updateConsultation,
     updateMyProfile,
-    login
+    login,
+    listDoctors,
+    getDoctorById,
 } from "#modules/doctors/doctors.controller.js";
 import { authenticate, requireRole } from "#middleware/auth.middleware.js";
 import wrapper from "#utils/wrapper.js";
 const router = express.Router();
 
 router.post("/login", wrapper(login));
+router.get("/", wrapper(listDoctors));
+router.get("/byId/:doctorId", wrapper(getDoctorById));
 
 router.get(
     "/me",

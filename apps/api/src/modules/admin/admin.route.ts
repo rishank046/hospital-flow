@@ -3,9 +3,13 @@ import { authenticate, requireRole } from "#middleware/auth.middleware.js";
 import wrapper from "#utils/wrapper.js";
 import {
     createDoctor,
+    createStaff,
     listDoctors,
     listPatients,
+    listStaff,
     login,
+    updateStaff,
+    updateStaffStatus,
 } from "./admin.controller.js";
 
 const router = express.Router();
@@ -31,6 +35,34 @@ router.get(
     authenticate,
     requireRole("ADMIN"),
     wrapper(listPatients)
+);
+
+router.post(
+    "/staff",
+    authenticate,
+    requireRole("ADMIN"),
+    wrapper(createStaff)
+);
+
+router.get(
+    "/staff",
+    authenticate,
+    requireRole("ADMIN"),
+    wrapper(listStaff)
+);
+
+router.patch(
+    "/staff/:staffId",
+    authenticate,
+    requireRole("ADMIN"),
+    wrapper(updateStaff)
+);
+
+router.patch(
+    "/staff/:staffId/status",
+    authenticate,
+    requireRole("ADMIN"),
+    wrapper(updateStaffStatus)
 );
 
 export default router;

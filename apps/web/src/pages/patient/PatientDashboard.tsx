@@ -142,7 +142,7 @@ export function PatientDashboard() {
                         'Hospital Outpatient Department'}
                     </p>
                     <span className="next-apt-time">
-                      📅{' '}
+                      ◷{' '}
                       {new Date(
                         nextAppointment.startTime || nextAppointment.start_time || ''
                       ).toLocaleString([], {

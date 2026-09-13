@@ -82,11 +82,60 @@ export async function createDoctorService(data: CreateDoctorInput) {
     }
 
     const hashedPassword = await bcrypt.hash(data.password, 10);
+
+    // Create or find User
+    let userId: string;
+    const userRes = await pool.query<{ id: string }>(
+        'SELECT id FROM "User" WHERE email = $1',
+        [data.email]
+    );
+
+    if (userRes.rowCount && userRes.rows[0]) {
+        userId = userRes.rows[0].id;
+        await pool.query('UPDATE "User" SET role = $1 WHERE id = $2', ['STAFF', userId]);
+    } else {
+        const newUser = await pool.query<{ id: string }>(
+            `INSERT INTO "User" (name, email, password, role)
+             VALUES ($1, $2, $3, 'STAFF')
+             RETURNING id`,
+            [data.name, data.email, hashedPassword]
+        );
+        userId = newUser.rows[0]!.id;
+    }
+
+    // Create Staff record
+    const employeeCode = `DOC-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 1000)}`;
+    const staffRes = await pool.query<{ id: string }>(
+        `INSERT INTO "Staff" (user_id, employee_code, role, status)
+         VALUES ($1, $2, 'DOCTOR', 'ACTIVE')
+         RETURNING id`,
+        [userId, employeeCode]
+    );
+    const staffId = staffRes.rows[0]!.id;
+
+    // Find or create Department
+    let departmentId: string | null = null;
+    const deptRes = await pool.query<{ id: string }>(
+        'SELECT id FROM "Department" WHERE name ILIKE $1',
+        [data.department.trim()]
+    );
+    if (deptRes.rowCount && deptRes.rows[0]) {
+        departmentId = deptRes.rows[0].id;
+    } else {
+        const newDept = await pool.query<{ id: string }>(
+            'INSERT INTO "Department" (name) VALUES ($1) RETURNING id',
+            [data.department.trim()]
+        );
+        departmentId = newDept.rows[0]?.id ?? null;
+    }
+
     const result = await pool.query<DoctorListRow>(
-        `INSERT INTO "Doctor" (name, email, password, specialization, department)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO "Doctor" (staff_id, department_id, name, email, password, specialization, department)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING id, name, email, specialization, department, created_at`,
         [
+            staffId,
+            departmentId,
             data.name,
             data.email,
             hashedPassword,
@@ -105,9 +154,18 @@ export async function createDoctorService(data: CreateDoctorInput) {
 
 export async function listDoctorsService() {
     const result = await pool.query<DoctorListRow>(
-        `SELECT id, name, email, specialization, department, created_at
-         FROM "Doctor"
-         ORDER BY created_at DESC`
+        `SELECT 
+            d.id, 
+            COALESCE(u.name, d.name) as name, 
+            COALESCE(u.email, d.email) as email, 
+            d.specialization, 
+            COALESCE(dept.name, d.department) as department, 
+            d.created_at
+         FROM "Doctor" d
+         LEFT JOIN "Staff" s ON d.staff_id = s.id
+         LEFT JOIN "User" u ON s.user_id = u.id
+         LEFT JOIN "Department" dept ON d.department_id = dept.id
+         ORDER BY d.created_at DESC`
     );
 
     return { doctors: result.rows };
@@ -132,3 +190,10 @@ export async function listPatientsService() {
 
     return { patients: result.rows };
 }
+
+export {
+    createStaffService,
+    updateStaffService,
+    updateStaffStatusService,
+    listStaffService,
+} from "#modules/staff/staff.service.js";

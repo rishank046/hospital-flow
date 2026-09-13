@@ -1,6 +1,10 @@
 import pool from "#database/pool.js";
 import { AppError } from "#utils/errorHandler.js";
-import type { BookAppointmentInput, UpdatePatientProfileInput } from "./patient.schema.js";
+import type {
+    BookAppointmentInput,
+    CreatePatientProfileInput,
+    UpdatePatientProfileInput,
+} from "./patient.schema.js";
 
 interface UserRow {
     id: string;
@@ -18,6 +22,101 @@ interface PatientRow {
     patient_type: "Online" | "Walkin";
     doctor_id: string | null;
     created_at: Date;
+}
+
+export async function listMyPatientsService(ownerUserId: string) {
+    const res = await pool.query(
+        `SELECT id, owner_user_id, name, age, gender, patient_type, created_at
+         FROM "Patient"
+         WHERE owner_user_id = $1
+         ORDER BY created_at ASC`,
+        [ownerUserId]
+    );
+
+    return { patients: res.rows };
+}
+
+export async function createPatientProfileService(
+    ownerUserId: string,
+    data: CreatePatientProfileInput
+) {
+    const res = await pool.query(
+        `INSERT INTO "Patient" (owner_user_id, name, age, gender, patient_type)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, owner_user_id, name, age, gender, patient_type, created_at`,
+        [
+            ownerUserId,
+            data.name,
+            data.age,
+            data.gender,
+            data.patientType ?? "Online",
+        ]
+    );
+
+    return res.rows[0];
+}
+
+export async function getPatientProfileByIdService(
+    ownerUserId: string,
+    patientId: string,
+    isStaff = false
+) {
+    const res = await pool.query(
+        `SELECT id, owner_user_id, name, age, gender, patient_type, created_at
+         FROM "Patient"
+         WHERE id = $1`,
+        [patientId]
+    );
+
+    if (res.rowCount === 0 || !res.rows[0]) {
+        throw new AppError("Patient profile not found", 404);
+    }
+
+    const patient = res.rows[0];
+    if (!isStaff && patient.owner_user_id !== ownerUserId) {
+        throw new AppError("Forbidden: you do not have permission to access this patient profile", 403);
+    }
+
+    return patient;
+}
+
+export async function updatePatientProfileByIdService(
+    ownerUserId: string,
+    patientId: string,
+    data: UpdatePatientProfileInput
+) {
+    const existing = await pool.query<PatientRow>(
+        'SELECT id, owner_user_id, name, age, gender, patient_type FROM "Patient" WHERE id = $1',
+        [patientId]
+    );
+
+    if (existing.rowCount === 0 || !existing.rows[0]) {
+        throw new AppError("Patient profile not found", 404);
+    }
+
+    if (existing.rows[0].owner_user_id !== ownerUserId) {
+        throw new AppError("Forbidden: you do not own this patient profile", 403);
+    }
+
+    const current = existing.rows[0];
+    const updateRes = await pool.query(
+        `UPDATE "Patient"
+         SET name = $1,
+             age = $2,
+             gender = $3,
+             patient_type = $4
+         WHERE id = $5
+         RETURNING id, owner_user_id, name, age, gender, patient_type, created_at`,
+        [
+            data.name ?? current.name,
+            data.age ?? current.age,
+            data.gender ?? current.gender,
+            data.patientType ?? current.patient_type,
+            patientId,
+        ]
+    );
+
+    return updateRes.rows[0];
 }
 
 export async function ensurePatientRecord(userId: string, email: string): Promise<string> {
@@ -151,13 +250,18 @@ export async function getMyAppointmentsService(userId: string, email: string) {
             a.id,
             a.start_time,
             a.end_time,
+            a.type,
+            a.status,
             a.created_at,
             d.id as doctor_id,
-            d.name as doctor_name,
+            COALESCE(doc_u.name, d.name) as doctor_name,
             d.specialization as doctor_specialization,
-            d.department as doctor_department
+            COALESCE(dept.name, d.department) as doctor_department
          FROM "Appointment" a
          JOIN "Doctor" d ON a.doctor_id = d.id
+         LEFT JOIN "Staff" s ON d.staff_id = s.id
+         LEFT JOIN "User" doc_u ON s.user_id = doc_u.id
+         LEFT JOIN "Department" dept ON d.department_id = dept.id
          JOIN "Patient" p ON a.patient_id = p.id
          LEFT JOIN "User" u ON p.owner_user_id = u.id
          WHERE p.owner_user_id = $1 OR u.email = $2
@@ -173,10 +277,33 @@ export async function bookAppointmentService(
     email: string,
     data: BookAppointmentInput
 ) {
-    const patientId = await ensurePatientRecord(userId, email);
+    let patientId = data.patientId;
+    if (patientId) {
+        const patCheck = await pool.query<{ owner_user_id: string }>(
+            'SELECT owner_user_id FROM "Patient" WHERE id = $1',
+            [patientId]
+        );
+        if (patCheck.rowCount === 0 || !patCheck.rows[0]) {
+            throw new AppError("Patient not found", 404);
+        }
+        if (patCheck.rows[0].owner_user_id !== userId) {
+            throw new AppError("Forbidden: you do not own this patient profile", 403);
+        }
+    } else {
+        patientId = await ensurePatientRecord(userId, email);
+    }
 
     const doctorRes = await pool.query(
-        'SELECT id, name, specialization, department FROM "Doctor" WHERE id = $1',
+        `SELECT 
+            d.id, 
+            COALESCE(u.name, d.name) as name, 
+            d.specialization, 
+            COALESCE(dept.name, d.department) as department 
+         FROM "Doctor" d
+         LEFT JOIN "Staff" s ON d.staff_id = s.id
+         LEFT JOIN "User" u ON s.user_id = u.id
+         LEFT JOIN "Department" dept ON d.department_id = dept.id
+         WHERE d.id = $1`,
         [data.doctorId]
     );
 
@@ -199,6 +326,7 @@ export async function bookAppointmentService(
     const conflictRes = await pool.query(
         `SELECT id FROM "Appointment"
          WHERE doctor_id = $1
+           AND status != 'CANCELLED'
            AND (
              (start_time <= $2 AND end_time > $2)
              OR (start_time < $3 AND end_time >= $3)
@@ -212,10 +340,10 @@ export async function bookAppointmentService(
     }
 
     const insertRes = await pool.query(
-        `INSERT INTO "Appointment" (patient_id, doctor_id, start_time, end_time)
-         VALUES ($1, $2, $3, $4)
-         RETURNING id, patient_id, doctor_id, start_time, end_time, created_at`,
-        [patientId, data.doctorId, startTime, endTime]
+        `INSERT INTO "Appointment" (patient_id, doctor_id, start_time, end_time, type, status)
+         VALUES ($1, $2, $3, $4, $5, 'SCHEDULED')
+         RETURNING id, patient_id, doctor_id, start_time, end_time, type, status, created_at`,
+        [patientId, data.doctorId, startTime, endTime, data.type ?? "CONSULTATION"]
     );
 
     return {

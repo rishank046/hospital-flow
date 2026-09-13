@@ -18,7 +18,7 @@ async function login(request: Request, response: Response) {
 	const { email, password } = loginSchema.parse(request.body);
 	const result = await loginService(email, password);
 
-	response.status(200).json({ token: result.token });
+	response.status(200).json(result);
 }
 
 async function register(request: Request, response: Response) {

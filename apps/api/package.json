@@ -15,6 +15,7 @@
     "#database/*": "./src/database/*",
     "#middleware/*": "./src/middleware/*",
     "#modules/*": "./src/modules/*",
+    "#types/*": "./src/types/*",
     "#utils/*": "./src/utils/*",
     "#websocket/*": "./src/websocket/*"
   },

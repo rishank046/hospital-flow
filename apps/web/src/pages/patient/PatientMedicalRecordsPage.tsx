@@ -115,7 +115,7 @@ export function PatientMedicalRecordsPage() {
             <div className="prescriptions-tab-content">
               {prescriptions.length === 0 ? (
                 <div className="empty-data-state">
-                  <span className="empty-icon" aria-hidden="true">💊</span>
+                  <span className="empty-icon" aria-hidden="true">Rx</span>
                   <h3>No prescriptions on record</h3>
                   <p>Medications prescribed during doctor consultations will appear here.</p>
                 </div>
@@ -133,7 +133,7 @@ export function PatientMedicalRecordsPage() {
             <div className="consultations-tab-content">
               {consultations.length === 0 ? (
                 <div className="empty-data-state">
-                  <span className="empty-icon" aria-hidden="true">📋</span>
+                  <span className="empty-icon" aria-hidden="true">≡</span>
                   <h3>No consultations on record</h3>
                   <p>Summaries and clinical notes from your physicians will be stored here.</p>
                 </div>

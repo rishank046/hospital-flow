@@ -5,12 +5,13 @@ import {
   useState,
 } from 'react';
 import type { ReactNode } from 'react';
-import type { AuthUser, UserRole } from '../types/auth.types';
+import type { AuthUser, StaffRole, UserRole } from '../types/auth.types';
 import { authService } from '../services/auth.service';
 
 export interface AuthContextType {
   user: AuthUser | null;
   role: UserRole | null;
+  staffRole: StaffRole | null;
   token: string | null;
   loading: boolean;
   isAuthenticated: boolean;
@@ -28,8 +29,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
   const [role, setRole] = useState<UserRole | null>(() => {
     const savedRole = localStorage.getItem('auth_role');
-    if (savedRole === 'PATIENT' || savedRole === 'DOCTOR' || savedRole === 'ADMIN') {
+    if (
+      savedRole === 'PATIENT' ||
+      savedRole === 'DOCTOR' ||
+      savedRole === 'STAFF' ||
+      savedRole === 'ADMIN'
+    ) {
       return savedRole;
+    }
+    return null;
+  });
+  const [staffRole, setStaffRole] = useState<StaffRole | null>(() => {
+    const savedStaffRole = localStorage.getItem('auth_staff_role');
+    if (
+      savedStaffRole === 'DOCTOR' ||
+      savedStaffRole === 'NURSE' ||
+      savedStaffRole === 'RECEPTIONIST' ||
+      savedStaffRole === 'LAB_STAFF' ||
+      savedStaffRole === 'PHARMACIST'
+    ) {
+      return savedStaffRole;
     }
     return null;
   });
@@ -49,9 +68,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const clearAuth = useCallback(() => {
     localStorage.removeItem('auth_token');
     localStorage.removeItem('auth_role');
+    localStorage.removeItem('auth_staff_role');
     localStorage.removeItem('auth_user');
     setToken(null);
     setRole(null);
+    setStaffRole(null);
     setUser(null);
   }, []);
 
@@ -83,11 +104,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('auth_token', newToken);
       localStorage.setItem('auth_role', newRole);
 
+      if (userData?.staffRole) {
+        localStorage.setItem('auth_staff_role', userData.staffRole);
+        setStaffRole(userData.staffRole);
+      } else {
+        localStorage.removeItem('auth_staff_role');
+        setStaffRole(null);
+      }
+
       const resolvedUser: AuthUser = {
         id: userData?.id || '',
         email: userData?.email || '',
-        name: userData?.name || (newRole === 'DOCTOR' ? 'Doctor' : 'Patient'),
+        name:
+          userData?.name ||
+          (newRole === 'DOCTOR'
+            ? 'Doctor'
+            : newRole === 'STAFF'
+            ? 'Staff Member'
+            : 'Patient'),
         role: newRole,
+        staffRole: userData?.staffRole,
+        employeeCode: userData?.employeeCode,
         specialization: userData?.specialization,
         department: userData?.department,
       };
@@ -112,6 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value: AuthContextType = {
     user,
     role,
+    staffRole,
     token,
     loading,
     isAuthenticated: Boolean(token && role),

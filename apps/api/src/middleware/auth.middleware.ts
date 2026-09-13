@@ -1,13 +1,10 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express";
-
+import pool from "#database/pool.js";
+import type { AuthPayload, StaffRole, SystemRole } from "#types/auth.types.js";
 import { verifyToken } from "#utils/signTokenWrapper.js";
 import { isTokenRevoked } from "#utils/tokenRevocation.js";
 
-export interface AuthPayload {
-    userId: string;
-    email: string;
-    role: "USER" | "ADMIN" | "DOCTOR" | "PATIENT";
-}
+export type { AuthPayload, StaffRole, SystemRole };
 
 export async function authenticate(
     request: Request,
@@ -28,9 +25,9 @@ export async function authenticate(
 
         if (!token) {
             response.status(401).json({
-            message: "Authentication token missing"
+                message: "Authentication token missing"
             });
-        return;
+            return;
         }
 
         if (isTokenRevoked(token)) {
@@ -46,16 +43,36 @@ export async function authenticate(
         );
 
         const payload = decodedToken as Record<string, unknown>;
-        const rawRole = (typeof payload["role"] === "string" ? payload["role"] : "PATIENT").toUpperCase();
-        const role = (rawRole === "USER" || rawRole === "ADMIN" || rawRole === "DOCTOR" || rawRole === "PATIENT" ? rawRole : "PATIENT") as AuthPayload["role"];
+        const rawRole = String(payload["role"] ?? "USER").toUpperCase();
+        
+        let role: SystemRole = "USER";
+        let staffRole: StaffRole | undefined = typeof payload["staffRole"] === "string" 
+            ? (payload["staffRole"] as StaffRole) 
+            : undefined;
+
+        if (rawRole === "ADMIN") {
+            role = "ADMIN";
+        } else if (rawRole === "STAFF" || rawRole === "DOCTOR") {
+            role = "STAFF";
+            if (rawRole === "DOCTOR") {
+                staffRole = "DOCTOR";
+            }
+        } else {
+            role = "USER";
+        }
+
         const userId = String(payload["userId"] ?? payload["id"] ?? "");
         const email = String(payload["email"] ?? "");
 
-        request.tokenPayload = {
+        const authData: AuthPayload = {
             userId,
             email,
             role,
+            staffRole,
         };
+
+        request.user = authData;
+        request.tokenPayload = authData;
 
         next();
     } catch (error) {
@@ -65,24 +82,89 @@ export async function authenticate(
     }
 }
 
-export const requireRole = (role: "USER" | "ADMIN" | "DOCTOR" | "PATIENT"): RequestHandler => (
+export const requireRole = (
+    role: "USER" | "STAFF" | "ADMIN" | "DOCTOR" | "PATIENT"
+): RequestHandler => (
     request: Request,
     response: Response,
     next: NextFunction,
 ) => {
-    if (!request.tokenPayload) {
+    const user = request.user || request.tokenPayload;
+    if (!user) {
         response.status(401).json({ message: "Authentication required" });
         return;
     }
 
-    const userRole = request.tokenPayload.role;
-    const isPatientMatch = role === "PATIENT" && (userRole === "PATIENT" || userRole === "USER");
-    const isExactMatch = userRole === role;
+    const userRole = user.role;
+    const isPatientMatch = (role === "PATIENT" || role === "USER") && userRole === "USER";
+    const isDoctorMatch = role === "DOCTOR" && (userRole === "STAFF" && (user.staffRole === "DOCTOR" || !user.staffRole));
+    const isStaffMatch = role === "STAFF" && userRole === "STAFF";
+    const isExactMatch = (userRole as string) === role;
 
-    if (!isPatientMatch && !isExactMatch) {
+    if (!isPatientMatch && !isDoctorMatch && !isStaffMatch && !isExactMatch) {
         response.status(403).json({ message: "Forbidden: insufficient permissions" });
         return;
     }
 
     next();
+};
+
+export const requireStaffRole = (
+    ...allowedRoles: StaffRole[]
+): RequestHandler => async (
+    request: Request,
+    response: Response,
+    next: NextFunction,
+) => {
+    const user = request.user || request.tokenPayload;
+    if (!user) {
+        response.status(401).json({ message: "Authentication required" });
+        return;
+    }
+
+    if (user.role !== "STAFF" && user.role !== "ADMIN") {
+        response.status(403).json({ message: "Forbidden: staff access required" });
+        return;
+    }
+
+    // Look up Staff record for this User
+    try {
+        const staffRes = await pool.query<{ role: StaffRole; status: string }>(
+            'SELECT role, status FROM "Staff" WHERE user_id = $1',
+            [user.userId]
+        );
+
+        if (staffRes.rowCount && staffRes.rowCount > 0 && staffRes.rows[0]) {
+            const staff = staffRes.rows[0];
+            if (staff.status !== "ACTIVE") {
+                response.status(403).json({ message: "Forbidden: staff account is inactive" });
+                return;
+            }
+
+            if (allowedRoles.length > 0 && !allowedRoles.includes(staff.role)) {
+                response.status(403).json({ message: "Forbidden: insufficient staff role" });
+                return;
+            }
+
+            // Cache on request.user
+            user.staffRole = staff.role;
+            return next();
+        }
+
+        // Fallback for tests / legacy where Doctor was seeded directly
+        if (allowedRoles.includes("DOCTOR")) {
+            const docRes = await pool.query<{ id: string }>(
+                'SELECT id FROM "Doctor" WHERE id = $1',
+                [user.userId]
+            );
+            if (docRes.rowCount && docRes.rowCount > 0) {
+                user.staffRole = "DOCTOR";
+                return next();
+            }
+        }
+
+        response.status(403).json({ message: "Forbidden: staff profile not found" });
+    } catch (err) {
+        next(err);
+    }
 };

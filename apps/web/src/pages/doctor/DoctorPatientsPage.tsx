@@ -75,7 +75,7 @@ export function DoctorPatientsPage() {
           placeholder="Search patients by name, email, or UUID..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          leftIcon="🔍"
+          leftIcon="⌕"
         />
       </div>
 
@@ -89,7 +89,7 @@ export function DoctorPatientsPage() {
         <Spinner label="Loading assigned patient roster..." />
       ) : filtered.length === 0 ? (
         <div className="empty-data-state">
-          <span className="empty-icon" aria-hidden="true">👥</span>
+          <span className="empty-icon" aria-hidden="true">◈</span>
           <h3>No patients found</h3>
           <p>
             {search

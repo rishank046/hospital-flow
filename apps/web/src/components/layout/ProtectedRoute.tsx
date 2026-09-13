@@ -1,9 +1,10 @@
 import { useEffect, type ReactNode } from 'react';
 import { useAuth } from '../../hooks/useAuth';
+import type { UserRole } from '../../types/auth.types';
 
 interface ProtectedRouteProps {
   children: ReactNode;
-  allowedRoles?: Array<'PATIENT' | 'DOCTOR' | 'ADMIN'>;
+  allowedRoles?: Array<UserRole>;
 }
 
 export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {

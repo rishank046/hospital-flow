@@ -13,19 +13,23 @@ export function Sidebar() {
 
   const patientNav: NavItem[] = [
     { label: 'Dashboard', href: '/patient', icon: '⊞' },
-    { label: 'Appointments', href: '/patient/appointments', icon: '📅' },
+    { label: 'Appointments', href: '/patient/appointments', icon: '◷' },
     { label: 'Care Journey', href: '/patient/journey', icon: '⤳' },
-    { label: 'Medical Records', href: '/patient/records', icon: '📋' },
-    { label: 'Profile Settings', href: '/patient/profile', icon: '👤' },
+    { label: 'Medical Records', href: '/patient/records', icon: '≡' },
+    { label: 'Profile Settings', href: '/patient/profile', icon: '◎' },
   ];
 
   const doctorNav: NavItem[] = [
     { label: 'Dashboard', href: '/doctor', icon: '⊞' },
-    { label: 'Daily Schedule', href: '/doctor/schedule', icon: '📅' },
-    { label: 'Assigned Patients', href: '/doctor/patients', icon: '👥' },
+    { label: 'Daily Schedule', href: '/doctor/schedule', icon: '◷' },
+    { label: 'Assigned Patients', href: '/doctor/patients', icon: '◈' },
   ];
 
-  const navItems = role === 'DOCTOR' ? doctorNav : patientNav;
+  const staffNav: NavItem[] = [
+    { label: 'Staff Portal', href: '/staff', icon: '⊞' },
+  ];
+
+  const navItems = role === 'DOCTOR' ? doctorNav : role === 'STAFF' ? staffNav : patientNav;
 
   const navigate = (href: string, e: MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
@@ -38,7 +42,7 @@ export function Sidebar() {
   return (
     <aside className="app-sidebar" aria-label="Portal Navigation">
       <div className="sidebar-section-title">
-        {role === 'DOCTOR' ? 'Doctor Workspace' : 'Patient Workspace'}
+        {role === 'DOCTOR' ? 'Doctor Workspace' : role === 'STAFF' ? 'Staff Workspace' : 'Patient Workspace'}
       </div>
       <nav className="sidebar-nav">
         {navItems.map((item) => {
