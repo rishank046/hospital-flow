@@ -1,122 +1,138 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import { useEffect, useState } from 'react';
+import { AuthProvider } from './context/AuthContext';
+import { useAuth } from './hooks/useAuth';
+import { ProtectedRoute } from './components/layout/ProtectedRoute';
+import { LoginPage } from './pages/auth/LoginPage';
+import { RegisterPage } from './pages/auth/RegisterPage';
+import { DoctorLoginPage } from './pages/auth/DoctorLoginPage';
+import { PatientDashboard } from './pages/patient/PatientDashboard';
+import { PatientAppointmentsPage } from './pages/patient/PatientAppointmentsPage';
+import { PatientJourneyPage } from './pages/patient/PatientJourneyPage';
+import { PatientMedicalRecordsPage } from './pages/patient/PatientMedicalRecordsPage';
+import { PatientProfilePage } from './pages/patient/PatientProfilePage';
+import { DoctorDashboard } from './pages/doctor/DoctorDashboard';
+import { DoctorSchedulePage } from './pages/doctor/DoctorSchedulePage';
+import { DoctorPatientsPage } from './pages/doctor/DoctorPatientsPage';
+import { DoctorPatientDetailPage } from './pages/doctor/DoctorPatientDetailPage';
+import { NotFoundPage } from './pages/NotFoundPage';
+import './App.css';
 
-function App() {
-  const [count, setCount] = useState(0)
+function Router() {
+  const [path, setPath] = useState(() => window.location.pathname);
+  const { isAuthenticated, role } = useAuth();
 
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+  useEffect(() => {
+    const onPopState = () => setPath(window.location.pathname);
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
-      <div className="ticks"></div>
+  // Public authentication routes
+  if (path === '/' || path === '/login') {
+    if (isAuthenticated && role) {
+      return role === 'DOCTOR' ? (
+        <ProtectedRoute allowedRoles={['DOCTOR']}>
+          <DoctorDashboard />
+        </ProtectedRoute>
+      ) : (
+        <ProtectedRoute allowedRoles={['PATIENT']}>
+          <PatientDashboard />
+        </ProtectedRoute>
+      );
+    }
+    return <LoginPage />;
+  }
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+  if (path === '/register') {
+    return <RegisterPage />;
+  }
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+  if (path === '/doctor/login') {
+    return <DoctorLoginPage />;
+  }
+
+  // Patient protected routes
+  if (path === '/patient' || path === '/patient/dashboard') {
+    return (
+      <ProtectedRoute allowedRoles={['PATIENT']}>
+        <PatientDashboard />
+      </ProtectedRoute>
+    );
+  }
+
+  if (path === '/patient/appointments') {
+    return (
+      <ProtectedRoute allowedRoles={['PATIENT']}>
+        <PatientAppointmentsPage />
+      </ProtectedRoute>
+    );
+  }
+
+  if (path === '/patient/journey') {
+    return (
+      <ProtectedRoute allowedRoles={['PATIENT']}>
+        <PatientJourneyPage />
+      </ProtectedRoute>
+    );
+  }
+
+  if (path === '/patient/records') {
+    return (
+      <ProtectedRoute allowedRoles={['PATIENT']}>
+        <PatientMedicalRecordsPage />
+      </ProtectedRoute>
+    );
+  }
+
+  if (path === '/patient/profile') {
+    return (
+      <ProtectedRoute allowedRoles={['PATIENT']}>
+        <PatientProfilePage />
+      </ProtectedRoute>
+    );
+  }
+
+  // Doctor protected routes
+  if (path === '/doctor' || path === '/doctor/dashboard') {
+    return (
+      <ProtectedRoute allowedRoles={['DOCTOR']}>
+        <DoctorDashboard />
+      </ProtectedRoute>
+    );
+  }
+
+  if (path === '/doctor/schedule') {
+    return (
+      <ProtectedRoute allowedRoles={['DOCTOR']}>
+        <DoctorSchedulePage />
+      </ProtectedRoute>
+    );
+  }
+
+  if (path === '/doctor/patients') {
+    return (
+      <ProtectedRoute allowedRoles={['DOCTOR']}>
+        <DoctorPatientsPage />
+      </ProtectedRoute>
+    );
+  }
+
+  if (path.startsWith('/doctor/patients/')) {
+    const patientId = path.replace('/doctor/patients/', '').split('/')[0];
+    return (
+      <ProtectedRoute allowedRoles={['DOCTOR']}>
+        <DoctorPatientDetailPage patientId={patientId} />
+      </ProtectedRoute>
+    );
+  }
+
+  return <NotFoundPage />;
 }
 
-export default App
+export default function App() {
+  return (
+    <AuthProvider>
+      <Router />
+    </AuthProvider>
+  );
+}
