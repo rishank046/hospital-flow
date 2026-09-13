@@ -5,10 +5,12 @@ import {
     getMyStaffProfile,
     getStaffById,
     listStaff,
+    staffLogin,
 } from "./staff.controller.js";
 
 const router = express.Router();
 
+router.post("/login", wrapper(staffLogin));
 router.get("/me", authenticate, requireRole("STAFF"), wrapper(getMyStaffProfile));
 router.get("/:staffId", authenticate, wrapper(getStaffById));
 router.get("/", authenticate, wrapper(listStaff));

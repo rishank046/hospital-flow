@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Heart, Plus, Sparkles } from 'lucide-react';
+import { Heart, Shield, Sparkles } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { authService } from '../../services/auth.service';
 import { Alert } from '../../components/common/Alert';
@@ -41,7 +41,7 @@ export function LoginPage() {
 
   const handleAccountTypeChange = (type: AccountType) => {
     setAccountType(type);
-    if (type === 'doctor') {
+    if (type === 'staff' || type === 'doctor') {
       setMode('login');
     }
     setError('');
@@ -87,18 +87,25 @@ export function LoginPage() {
       }
 
       let response;
-      if (accountType === 'doctor') {
+      if (accountType === 'staff' || accountType === 'doctor') {
         try {
-          response = await authService.doctorLogin({
+          response = await authService.staffLogin({
             email: email.trim(),
             password,
           });
         } catch {
-          // Fallback to unified login
-          response = await authService.login({
-            email: email.trim(),
-            password,
-          });
+          try {
+            response = await authService.doctorLogin({
+              email: email.trim(),
+              password,
+            });
+          } catch {
+            // Fallback to unified login
+            response = await authService.login({
+              email: email.trim(),
+              password,
+            });
+          }
         }
       } else {
         response = await authService.login({
@@ -268,7 +275,9 @@ export function LoginPage() {
 
             <p>
               {mode === 'login'
-                ? 'Sign in to continue to your MediQ care workspace.'
+                ? accountType === 'staff'
+                  ? 'Sign in to access your clinical or departmental staff workspace.'
+                  : 'Sign in to continue to your MediQ care workspace.'
                 : 'Set up your patient account in less than a minute.'}
             </p>
           </div>
@@ -304,14 +313,14 @@ export function LoginPage() {
             <button
               type="button"
               role="tab"
-              aria-selected={accountType === 'doctor'}
-              className={accountType === 'doctor' ? 'active' : ''}
-              onClick={() => handleAccountTypeChange('doctor')}
+              aria-selected={accountType === 'staff'}
+              className={accountType === 'staff' ? 'active' : ''}
+              onClick={() => handleAccountTypeChange('staff')}
             >
               <span className="toggle-icon" aria-hidden="true">
-                <Plus size={14} aria-hidden="true" />
+                <Shield size={14} aria-hidden="true" />
               </span>
-              Doctor
+              Staff
             </button>
           </div>
 
@@ -355,7 +364,11 @@ export function LoginPage() {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
+                  placeholder={
+                    accountType === 'staff'
+                      ? 'staff@hospital.org'
+                      : 'patient@example.com'
+                  }
                   autoComplete="email"
                   required
                 />
@@ -449,10 +462,10 @@ export function LoginPage() {
             )}
           </div>
 
-          {accountType === 'doctor' && mode === 'login' && (
+          {(accountType === 'staff' || accountType === 'doctor') && mode === 'login' && (
             <div className="admin-note">
               <span>i</span>
-              Doctor accounts are created by hospital administrators.
+              Hospital staff accounts (Doctors, Nurses, Receptionists, Admins) are provisioned by hospital administrators.
             </div>
           )}
 

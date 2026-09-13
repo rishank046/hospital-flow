@@ -71,11 +71,12 @@ beforeAll(async () => {
     doctorId = docRes.rows[0].id;
 
     // Seed a User
+    const hashedPatientPassword = await bcrypt.hash(patientPassword, 10);
     const userRes = await pool.query(
         `INSERT INTO "User" (name, email, password, role)
          VALUES ($1, $2, $3, 'USER')
          RETURNING id, name, email`,
-        ["John Connor", patientEmail, patientPassword]
+        ["John Connor", patientEmail, hashedPatientPassword]
     );
     userId = userRes.rows[0].id;
 
@@ -766,6 +767,53 @@ describe("Staff Administration & Role Enforcement Flow", () => {
         });
 
         expect(res.status).toBe(403);
+    });
+
+    it("POST /staff/login - staff member can authenticate through staff login", async () => {
+        const res = await fetch(`${baseUrl}/staff/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                email: nurseEmail,
+                password: nursePassword,
+            }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data).toHaveProperty("token");
+        expect(data.user.role).toBe("STAFF");
+        expect(data.user.staffRole).toBe("NURSE");
+    });
+
+    it("POST /staff/login - rejects patient accounts attempting staff portal login", async () => {
+        const res = await fetch(`${baseUrl}/staff/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                email: patientEmail,
+                password: patientPassword,
+            }),
+        });
+
+        expect(res.status).toBe(403);
+    });
+
+    it("POST /staff/login - doctor authenticates and receives doctor profile details", async () => {
+        const res = await fetch(`${baseUrl}/staff/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                email: doctorEmail,
+                password: doctorPassword,
+            }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data).toHaveProperty("token");
+        expect(data.user.staffRole).toBe("DOCTOR");
+        expect(data).toHaveProperty("doctor");
     });
 });
 
