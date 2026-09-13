@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 
 interface ProtectedRouteProps {
@@ -9,13 +9,15 @@ interface ProtectedRouteProps {
 export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
   const { isAuthenticated, role, loading } = useAuth();
 
-  if (loading) {
-    return <div className="loading-screen">Loading session...</div>;
-  }
+  useEffect(() => {
+    if (!loading && !isAuthenticated) {
+      window.history.pushState({}, '', '/login');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+  }, [loading, isAuthenticated]);
 
-  if (!isAuthenticated) {
-    window.location.href = '/login';
-    return null;
+  if (loading || !isAuthenticated) {
+    return <div className="loading-screen">Loading session...</div>;
   }
 
   if (allowedRoles && (!role || !allowedRoles.includes(role))) {

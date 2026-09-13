@@ -4,7 +4,7 @@ import { patientService } from '../services/patient.service';
 
 export function useAppointments(autoFetch = true) {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(autoFetch);
   const [error, setError] = useState<string | null>(null);
 
   const fetchAppointments = useCallback(async () => {
@@ -63,10 +63,28 @@ export function useAppointments(autoFetch = true) {
   }, []);
 
   useEffect(() => {
-    if (autoFetch) {
-      void fetchAppointments();
-    }
-  }, [autoFetch, fetchAppointments]);
+    if (!autoFetch) return;
+    let isMounted = true;
+    patientService
+      .getAppointments()
+      .then((data) => {
+        if (isMounted) setAppointments(data);
+      })
+      .catch((err) => {
+        if (isMounted) {
+          setError(
+            err instanceof Error ? err.message : 'Failed to load appointments.'
+          );
+        }
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [autoFetch]);
 
   return {
     appointments,

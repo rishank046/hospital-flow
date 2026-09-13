@@ -24,33 +24,73 @@ export const doctorService = {
     const data = await request<{ schedule?: ScheduleItem[] } | ScheduleItem[]>(
       '/doctors/me/schedule'
     );
-    if (Array.isArray(data)) {
-      return data;
-    }
-    return data.schedule || [];
+    const rawList = (Array.isArray(data) ? data : data.schedule || []) as Array<
+      ScheduleItem & Record<string, unknown>
+    >;
+    return rawList.map((s) => {
+      const startTime = (s.startTime || s.start_time || '') as string;
+      const endTime = (s.endTime || s.end_time || '') as string;
+      const isPast = endTime ? new Date(endTime).getTime() < Date.now() : false;
+      return {
+        ...s,
+        patientId: (s.patientId || s.patient_id) as string,
+        patientName: (s.patientName || s.patient_name) as string | undefined,
+        startTime,
+        endTime,
+        status: s.status || (isPast ? 'COMPLETED' : 'SCHEDULED'),
+      } as ScheduleItem;
+    });
   },
 
   getPatients: async () => {
     const data = await request<{ patients?: DoctorPatientItem[] } | DoctorPatientItem[]>(
       '/doctors/me/patients'
     );
-    if (Array.isArray(data)) {
-      return data;
-    }
-    return data.patients || [];
+    const rawList = (Array.isArray(data) ? data : data.patients || []) as Array<
+      DoctorPatientItem & Record<string, unknown>
+    >;
+    return rawList.map((p) => ({
+      ...p,
+      patientType: (p.patientType || p.patient_type || 'Online') as 'Online' | 'Walkin',
+      email: (p.email || p.owner_email) as string | undefined,
+    } as DoctorPatientItem));
   },
 
-  getPatientDetail: (patientId: string) =>
-    request<DoctorPatientDetail>(`/doctors/patients/${patientId}`),
+  getPatientDetail: async (patientId: string) => {
+    const detail = await request<DoctorPatientDetail & { patient: Record<string, unknown> }>(
+      `/doctors/patients/${patientId}`
+    );
+    return {
+      ...detail,
+      patient: {
+        ...detail.patient,
+        patientType: (detail.patient.patientType || detail.patient.patient_type || 'Online') as 'Online' | 'Walkin',
+        email: (detail.patient.email || detail.patient.owner_email) as string | undefined,
+      } as DoctorPatientItem,
+    };
+  },
 
   createConsultation: (
     patientId: string,
     payload: CreateConsultationPayload
-  ) =>
-    request<Consultation>(`/doctors/patients/${patientId}/consultation`, {
+  ) => {
+    const cleanPayload: Record<string, unknown> = {
+      diagnosis: payload.diagnosis,
+    };
+    if (payload.appointmentId && payload.appointmentId.trim()) {
+      cleanPayload.appointmentId = payload.appointmentId.trim();
+    }
+    if (payload.notes?.trim()) cleanPayload.notes = payload.notes.trim();
+    if (payload.treatmentPlan?.trim()) cleanPayload.treatmentPlan = payload.treatmentPlan.trim();
+    if (payload.prescriptions && payload.prescriptions.length > 0) {
+      cleanPayload.prescriptions = payload.prescriptions;
+    }
+
+    return request<Consultation>(`/doctors/patients/${patientId}/consultation`, {
       method: 'POST',
-      body: JSON.stringify(payload),
-    }),
+      body: JSON.stringify(cleanPayload),
+    });
+  },
 
   updateConsultation: (
     consultationId: string,
@@ -67,16 +107,24 @@ export const doctorService = {
   ) =>
     request<InvestigationOrder>(`/doctors/patients/${patientId}/orders`, {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        testName: payload.testName.trim(),
+        instructions: payload.instructions?.trim() || undefined,
+      }),
     }),
 
   getPatientReports: async (patientId: string) => {
     const data = await request<
       { reports?: InvestigationOrder[] } | InvestigationOrder[]
     >(`/doctors/patients/${patientId}/reports`);
-    if (Array.isArray(data)) {
-      return data;
-    }
-    return data.reports || [];
+    const rawList = (Array.isArray(data) ? data : data.reports || []) as Array<
+      InvestigationOrder & Record<string, unknown>
+    >;
+    return rawList.map((r) => ({
+      ...r,
+      testName: (r.testName || r.test_name) as string,
+      createdAt: (r.createdAt || r.created_at) as string | undefined,
+      updatedAt: (r.updatedAt || r.updated_at) as string | undefined,
+    } as InvestigationOrder));
   },
 };

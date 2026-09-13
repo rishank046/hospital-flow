@@ -15,6 +15,7 @@ export function PatientDashboard() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [currentTimestamp] = useState(() => Date.now());
 
   const loadData = async () => {
     setLoading(true);
@@ -36,11 +37,36 @@ export function PatientDashboard() {
   };
 
   useEffect(() => {
-    void loadData();
+    let isMounted = true;
+    Promise.all([
+      patientService.getProfile().catch(() => null),
+      patientService.getAppointments().catch(() => []),
+    ])
+      .then(([profData, aptsData]) => {
+        if (!isMounted) return;
+        if (profData) setProfile(profData);
+        if (aptsData) setAppointments(aptsData);
+      })
+      .catch((err) => {
+        if (isMounted) {
+          setError(
+            err instanceof Error ? err.message : 'Failed to load dashboard data.'
+          );
+        }
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const nextAppointment = appointments.find(
-    (a) => a.status === 'SCHEDULED' && new Date(a.startTime || a.start_time || '').getTime() > Date.now()
+    (a) =>
+      (a.status || 'SCHEDULED') === 'SCHEDULED' &&
+      new Date(a.startTime || a.start_time || '').getTime() > currentTimestamp
   );
 
   const navigate = (path: string) => {

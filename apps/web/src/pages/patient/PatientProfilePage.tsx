@@ -41,7 +41,31 @@ export function PatientProfilePage() {
   };
 
   useEffect(() => {
-    void fetchProfile();
+    let isMounted = true;
+    patientService
+      .getProfile()
+      .then((data) => {
+        if (!isMounted) return;
+        setProfile(data);
+        setName(data.name || '');
+        setAge(data.age || 0);
+        setGender(data.gender || 'Other');
+        setPatientType((data.patientType || data.patient_type || 'Online') as PatientType);
+      })
+      .catch((err) => {
+        if (isMounted) {
+          setError(
+            err instanceof Error ? err.message : 'Failed to load profile details.'
+          );
+        }
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
@@ -51,9 +75,10 @@ export function PatientProfilePage() {
 
     setSaving(true);
     try {
+      const parsedAge = Number(age);
       const updated = await patientService.updateProfile({
         name: name.trim(),
-        age: Number(age),
+        age: parsedAge > 0 ? parsedAge : undefined,
         gender,
         patientType,
       });
@@ -78,7 +103,7 @@ export function PatientProfilePage() {
         <Spinner label="Loading profile information..." />
       ) : (
         <Card className="profile-edit-card max-w-2xl">
-          {error && <Alert type="error" className="mb-4">{error}</Alert>}
+          {error && <Alert type="error" className="mb-4" onRetry={fetchProfile}>{error}</Alert>}
           {success && <Alert type="success" className="mb-4">{success}</Alert>}
 
           <form onSubmit={handleSubmit} className="profile-form">
