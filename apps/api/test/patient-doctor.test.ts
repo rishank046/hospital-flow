@@ -18,6 +18,7 @@ let userId: string;
 let patientId: string;
 const patientEmail = `pat_${Date.now()}@example.com`;
 const patientPassword = "patientPassword123";
+const jwtSecret = process.env.JWT_SECRET;
 
 let createdAppointmentId: string;
 let createdConsultationId: string;
@@ -64,9 +65,13 @@ beforeAll(async () => {
     patientId = patRes.rows[0].id;
 
     // Patient JWT
+    if (!jwtSecret) {
+        throw new Error("JWT_SECRET must be set for tests");
+    }
+
     patientToken = jwt.sign(
         { userId, email: patientEmail, role: "PATIENT" },
-        process.env.JWT_SECRET || "default_secret",
+        jwtSecret,
         { expiresIn: "4h" }
     );
 });

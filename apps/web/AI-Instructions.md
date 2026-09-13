@@ -128,7 +128,10 @@ Never write inline `fetch("http://localhost:3000/...")` inside React components.
 
 ### 1. Central HTTP Client (`src/services/api.client.ts`)
 ```ts
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
+const BASE_URL = import.meta.env.VITE_API_BASE_URL;
+if (!BASE_URL) {
+    throw new Error("VITE_API_BASE_URL is required");
+}
 
 export class ApiError extends Error {
     public status: number;
@@ -147,13 +150,11 @@ export async function request<T>(
     options: RequestInit = {}
 ): Promise<T> {
     const token = localStorage.getItem("auth_token");
-    const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-        ...(options.headers as Record<string, string>),
-    };
+    const headers = new Headers(options.headers);
+    headers.set("Content-Type", "application/json");
 
     if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
+        headers.set("Authorization", "Bearer " + token);
     }
 
     const response = await fetch(`${BASE_URL}${endpoint}`, {
@@ -187,7 +188,12 @@ export async function request<T>(
         return {} as T;
     }
 
-    return (await response.json()) as T;
+    const responseText = await response.text();
+    if (!responseText.trim()) {
+        return {} as T;
+    }
+
+    return JSON.parse(responseText) as T;
 }
 ```
 
@@ -210,7 +216,10 @@ export const patientService = {
             body: JSON.stringify(data),
         }),
 
-    getAppointments: () => request<Appointment[]>("/patients/me/appointments"),
+    getAppointments: async () => {
+        const data = await request<{ appointments: Appointment[] }>("/patients/me/appointments");
+        return data.appointments;
+    },
 
     bookAppointment: (payload: BookAppointmentPayload) =>
         request<Appointment>("/patients/appointments", {
@@ -254,11 +263,11 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
         return null;
     }
 
-    if (allowedRoles && role && !allowedRoles.includes(role)) {
+    if (allowedRoles && (!role || !allowedRoles.includes(role))) {
         return (
             <div className="forbidden-notice">
                 <h2>Access Forbidden (403)</h2>
-                <p>Your account ({role}) does not have permission to view this page.</p>
+                <p>Your account ({role ?? "UNKNOWN"}) does not have permission to view this page.</p>
             </div>
         );
     }
@@ -273,7 +282,9 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
 - Sanitize any user-generated URLs before passing to `<a href={url}>`.
 
 ### C. Sensitive Information & Logging
-- **NEVER** output passwords, tokens, or personal medical information to `console.log` or browser storage unencrypted.
+- **NEVER** output passwords, tokens, or personal medical information to `console.log`.
+- Current implementation stores auth tokens in `localStorage` for session persistence; treat this as a risk tradeoff and clear immediately on logout.
+- Prefer HttpOnly secure cookies for hardened deployments.
 - Clear authentication state immediately on logout:
   ```ts
   localStorage.removeItem("auth_token");
@@ -305,7 +316,7 @@ Every component fetching data MUST explicitly render:
 | Patient Detail | `GET` | `/doctors/patients/:patientId` | `DOCTOR` | None |
 | Create Consultation| `POST` | `/doctors/patients/:id/consultation`| `DOCTOR` | `diagnosis`, `treatmentPlan`, `prescriptions` |
 | Order Lab Test | `POST` | `/doctors/patients/:id/orders` | `DOCTOR` | `testName`, `instructions` |
-| Patient Reports | `GET` | `/doctors/patients/:id/reports` | `DOCTOR` | None |
+| Doctor Patient Reports | `GET` | `/doctors/patients/:id/reports` | `DOCTOR` | None |
 
 ---
 

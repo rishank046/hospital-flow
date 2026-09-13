@@ -78,7 +78,7 @@ Every feature module inside `src/modules/<feature>/` MUST contain exactly these 
 
 | File | Purpose & Responsibilities | FORBIDDEN in this file |
 | :--- | :--- | :--- |
-| `<feature>.schema.ts` | Zod validation schemas for `body`, `params`, `query`. TypeScript types inferred via `z.infer`. | NO database queries, NO Express handlers. |
+| `<feature>.schema.ts` *(or existing singular schema filenames such as `patient.schema.ts` / `doctor.schema.ts`)* | Zod validation schemas for `body`, `params`, `query`. TypeScript types inferred via `z.infer`. | NO database queries, NO Express handlers. |
 | `<feature>.service.ts` | Core business logic, PostgreSQL queries (`pool.query`), transaction handling, throwing `AppError`. | NO Express `req` or `res` objects. NO HTTP status codes directly returned. |
 | `<feature>.controller.ts` | Request input extraction, Zod parsing (`schema.parse()`), calling service functions, returning HTTP JSON status (`200`, `201`). | NO raw SQL queries (`pool.query`), NO direct business logic rules. |
 | `<feature>.route.ts` | Express `Router()`, attaching `authenticate`, `requireRole(...)`, and `wrapper(controllerFunction)`. | NO inline request handlers, NO business logic, NO SQL queries. |
@@ -202,8 +202,8 @@ export default router;
 
 The project uses `"module": "nodenext"` and `"verbatimModuleSyntax": true`. Violations will fail the compiler.
 
-1. **Explicit `.js` in All Imports**:
-   Always append `.js` to local and alias imports even though the source file is `.ts`.
+1. **Explicit `.js` in Local and Wildcard-Alias Imports**:
+   Always append `.js` to local imports and wildcard alias imports even though the source file is `.ts`.
    ```ts
    // CORRECT
    import pool from "#database/pool.js";
@@ -215,6 +215,8 @@ The project uses `"module": "nodenext"` and `"verbatimModuleSyntax": true`. Viol
    import pool from "#database/pool";
    import { AppError } from "../utils/errorHandler";
    ```
+
+   Keep exact package keys as configured (for example `#app` must be imported as `#app`, not `#app.js`).
 
 2. **Package Subpath Imports**:
    Use configured package imports from `package.json`:
@@ -257,7 +259,8 @@ The project uses `"module": "nodenext"` and `"verbatimModuleSyntax": true`. Viol
 
 ### B. SQL Injection Prevention
 - **ALWAYS** use parameterized queries with placeholders (`$1, $2, $3`).
-- **NEVER** use string interpolation, concatenation, or template strings in SQL queries.
+- **NEVER** interpolate untrusted values into SQL strings (no string concatenation/interpolation with user input).
+- Static template literals are allowed for multiline SQL only when all runtime values are passed through placeholders (`$1`, `$2`, ...).
 ```ts
 // SECURE:
 await pool.query('SELECT * FROM "User" WHERE email = $1', [email]);
@@ -271,7 +274,7 @@ await pool.query(`SELECT * FROM "User" WHERE email = '${email}'`);
 - All role-guarded routes MUST have `requireRole("PATIENT" | "DOCTOR" | "ADMIN")`.
 - Verify resource ownership:
   - Patients can ONLY access their own records (`owner_user_id = tokenPayload.userId`).
-  - Doctors can ONLY access records belonging to patients under their care or assigned department.
+  - Doctors can ONLY access records after explicit ownership checks (for example assigned patient or approved department scope) in each endpoint.
 - Token revocation: Always verify if token has been invalidated using `isTokenRevoked(token)`.
 
 ### D. Input Validation (Zod)

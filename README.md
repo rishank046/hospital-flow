@@ -48,6 +48,8 @@ Because team members leverage AI coding assistants (ChatGPT, Claude, Cursor, Git
 ```bash
 cd apps/api
 cp .env.example .env
+# Generate a strong JWT secret and paste it into JWT_SECRET in .env
+openssl rand -hex 32
 npm install
 npm run dev
 ```
