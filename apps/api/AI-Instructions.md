@@ -129,7 +129,7 @@ export async function createAppointmentService(
         throw new AppError("End time must be strictly after start time", 400);
     }
 
-    // 3. Conflict detection (parameterized query)
+    // 3. Best-effort conflict pre-check (still require DB-level overlap protection)
     const conflict = await pool.query(
         `SELECT id FROM "Appointment"
          WHERE doctor_id = $1
@@ -139,6 +139,7 @@ export async function createAppointmentService(
     if ((conflict.rowCount ?? 0) > 0) {
         throw new AppError("Doctor already has an appointment during this time slot", 409);
     }
+    // Add a DB exclusion constraint (or equivalent transactional lock) to prevent race-condition overlaps.
 
     // 4. Insert record
     const result = await pool.query(
