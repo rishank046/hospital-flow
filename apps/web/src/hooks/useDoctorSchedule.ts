@@ -4,7 +4,7 @@ import { doctorService } from '../services/doctor.service';
 
 export function useDoctorSchedule(autoFetch = true) {
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(autoFetch);
   const [error, setError] = useState<string | null>(null);
 
   const fetchSchedule = useCallback(async () => {
@@ -23,10 +23,28 @@ export function useDoctorSchedule(autoFetch = true) {
   }, []);
 
   useEffect(() => {
-    if (autoFetch) {
-      void fetchSchedule();
-    }
-  }, [autoFetch, fetchSchedule]);
+    if (!autoFetch) return;
+    let isMounted = true;
+    doctorService
+      .getSchedule()
+      .then((data) => {
+        if (isMounted) setSchedule(data);
+      })
+      .catch((err) => {
+        if (isMounted) {
+          setError(
+            err instanceof Error ? err.message : 'Failed to load doctor schedule.'
+          );
+        }
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [autoFetch]);
 
   return {
     schedule,

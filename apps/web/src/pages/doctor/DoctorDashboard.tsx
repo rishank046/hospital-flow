@@ -37,7 +37,32 @@ export function DoctorDashboard() {
   };
 
   useEffect(() => {
-    void loadDoctorData();
+    let isMounted = true;
+    Promise.all([
+      doctorService.getProfile().catch(() => null),
+      doctorService.getSchedule().catch(() => []),
+      doctorService.getPatients().catch(() => []),
+    ])
+      .then(([profData, schedData, patData]) => {
+        if (!isMounted) return;
+        if (profData) setProfile(profData);
+        if (schedData) setSchedule(schedData);
+        if (patData) setPatients(patData);
+      })
+      .catch((err) => {
+        if (isMounted) {
+          setError(
+            err instanceof Error ? err.message : 'Failed to load doctor dashboard.'
+          );
+        }
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const navigate = (path: string) => {

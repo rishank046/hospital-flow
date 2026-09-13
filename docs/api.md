@@ -1,248 +1,476 @@
-# Hospital Flow API
+# Hospital Flow API Specification
 
-This document explains how the frontend can call the API. Use JSON request bodies and include the `Content-Type` header for requests with a body.
+This document details the complete HTTP and WebSocket interface for the **Hospital Flow** backend.
 
-## Base URL
+---
 
-When running locally, the API listens on:
+## 🌐 Environments & Base URLs
 
-```text
-http://localhost:3000
+| Environment | HTTP Base URL | WebSocket Base URL |
+| :--- | :--- | :--- |
+| **Live Production (Render)** | `https://hospital-flow-l825.onrender.com` | `wss://hospital-flow-l825.onrender.com` |
+| **Local Development** | `http://localhost:3000` | `ws://localhost:3000` |
+
+All JSON requests must include the header:
+```http
+Content-Type: application/json
 ```
 
-Example frontend helper:
-
-```ts
-const API_URL = "http://localhost:3000";
-
-const response = await fetch(`${API_URL}/auth/login`, {
-	method: "POST",
-	headers: { "Content-Type": "application/json" },
-	body: JSON.stringify({
-		email: "patient@example.com",
-		password: "password123",
-	}),
-});
-
-const data = await response.json();
+All protected endpoints require the signed JWT in the `Authorization` header:
+```http
+Authorization: Bearer <token>
 ```
 
-## Authentication
+---
 
-### Patient registration
+## 1. Authentication Module (`/auth`)
 
-`POST /auth/register`
+### 1.1 Patient Registration
+- **Endpoint:** `POST /auth/register`
+- **Access:** Public
+- **Request Body:**
+  ```json
+  {
+    "name": "Jane Doe",
+    "email": "jane@example.com",
+    "password": "password123"
+  }
+  ```
+- **Validation:**
+  - `name`: String, minimum 1 character.
+  - `email`: Valid email format.
+  - `password`: String, minimum 6 characters.
+- **Success Response (`200 OK`):**
+  ```json
+  {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6..."
+  }
+  ```
+  *Note:* Registration automatically creates the user record and signs the user in, returning a 4-hour JWT with `role: "PATIENT"`.
 
-Request payload:
+### 1.2 Patient Login
+- **Endpoint:** `POST /auth/login`
+- **Access:** Public
+- **Request Body:**
+  ```json
+  {
+    "email": "jane@example.com",
+    "password": "password123"
+  }
+  ```
+- **Success Response (`200 OK`):**
+  ```json
+  {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6..."
+  }
+  ```
 
-```json
-{
-	"name": "John Connor",
-	"email": "patient@example.com",
-	"password": "password123"
-}
-```
+### 1.3 Logout
+- **Endpoint:** `POST /auth/logout`
+- **Access:** Authenticated (`PATIENT`, `DOCTOR`, or `ADMIN`)
+- **Headers:** `Authorization: Bearer <token>`
+- **Success Response (`200 OK`):**
+  ```json
+  {
+    "message": "Logged out successfully"
+  }
+  ```
 
-The name must not be empty, the email must be valid, and the password must contain at least 6 characters. Registration creates a user and then logs that user in, returning the same token response as login.
+### 1.4 Unimplemented Authentication Routes
+| Method | Endpoint | Status |
+| :--- | :--- | :--- |
+| `POST` | `/auth/refresh` | `501 Not Implemented` |
+| `POST` | `/auth/forgot-password` | `501 Not Implemented` |
+| `POST` | `/auth/reset-password` | `501 Not Implemented` |
 
-### Patient login
+---
 
-`POST /auth/login`
+## 2. Patient Module (`/patients`)
 
-Request payload:
+All patient endpoints require `Authorization: Bearer <token>` with `role: "PATIENT"` (or legacy `role: "USER"`).
 
-```json
-{
-	"email": "patient@example.com",
-	"password": "password123"
-}
-```
+### 2.1 Get Patient Profile
+- **Endpoint:** `GET /patients/me`
+- **Success Response (`200 OK`):**
+  ```json
+  {
+    "id": "eaf3fb17-176f-4776-afff-7d59a1ed7e16",
+    "owner_user_id": "a6c78572-3e5c-4941-a327-3874e125369d",
+    "name": "Jane Doe",
+    "email": "jane@example.com",
+    "age": 30,
+    "gender": "Female",
+    "patient_type": "Online",
+    "doctor_id": null,
+    "created_at": "2026-09-13T09:40:07.416Z"
+  }
+  ```
 
-The email must be valid and the password must contain at least 6 characters.
+### 2.2 Update Patient Profile
+- **Endpoint:** `PATCH /patients/me`
+- **Request Body (all fields optional):**
+  ```json
+  {
+    "name": "Jane Doe",
+    "age": 31,
+    "gender": "Female",
+    "patientType": "Online",
+    "doctorId": "d3b07384-d113-40e9-a477-94a55dc0ebf0"
+  }
+  ```
+- **Validation:**
+  - `age`: Must be an integer $> 0$.
+  - `gender`: `"Male"` | `"Female"` | `"Other"`.
+  - `patientType`: `"Online"` | `"Walkin"`.
+  - `doctorId`: Valid UUID or omitted.
+- **Success Response (`200 OK`):** Updated patient record object.
 
-Current response shape:
+### 2.3 Get Appointments
+- **Endpoint:** `GET /patients/me/appointments`
+- **Success Response (`200 OK`):**
+  ```json
+  {
+    "appointments": [
+      {
+        "id": "c1f72a4d-8012-4299-8cfb-6f68e00185f3",
+        "start_time": "2026-09-14T09:00:00.000Z",
+        "end_time": "2026-09-14T09:30:00.000Z",
+        "created_at": "2026-09-13T10:00:00.000Z",
+        "doctor_id": "d3b07384-d113-40e9-a477-94a55dc0ebf0",
+        "doctor_name": "Dr. Sarah Connor",
+        "doctor_specialization": "Cardiology",
+        "doctor_department": "Cardiology Department"
+      }
+    ]
+  }
+  ```
 
-```json
-{
-	"token": "replace-with-token"
-}
-```
+### 2.4 Book Appointment
+- **Endpoint:** `POST /patients/appointments`
+- **Request Body:**
+  ```json
+  {
+    "doctorId": "d3b07384-d113-40e9-a477-94a55dc0ebf0",
+    "startTime": "2026-09-14T09:00:00.000Z",
+    "endTime": "2026-09-14T09:30:00.000Z"
+  }
+  ```
+- **Errors:**
+  - `400 Bad Request`: `endTime <= startTime` or invalid datetime format.
+  - `404 Not Found`: Doctor does not exist.
+  - `409 Conflict`: Doctor already has an overlapping appointment in that time slot.
+- **Success Response (`201 Created`):**
+  ```json
+  {
+    "id": "c1f72a4d-8012-4299-8cfb-6f68e00185f3",
+    "patient_id": "eaf3fb17-176f-4776-afff-7d59a1ed7e16",
+    "doctor_id": "d3b07384-d113-40e9-a477-94a55dc0ebf0",
+    "start_time": "2026-09-14T09:00:00.000Z",
+    "end_time": "2026-09-14T09:30:00.000Z",
+    "created_at": "2026-09-13T10:00:00.000Z",
+    "doctor": {
+      "id": "d3b07384-d113-40e9-a477-94a55dc0ebf0",
+      "name": "Dr. Sarah Connor",
+      "specialization": "Cardiology",
+      "department": "Cardiology Department"
+    }
+  }
+  ```
 
-The token expires after 4 hours. It is a signed JWT containing the patient user ID, email, and `PATIENT` role.
+### 2.5 Cancel Appointment
+- **Endpoint:** `DELETE /patients/appointments/:appointmentId`
+- **Success Response (`200 OK`):**
+  ```json
+  {
+    "message": "Appointment cancelled successfully"
+  }
+  ```
 
-### Logout
+### 2.6 Care Journey Timeline
+- **Endpoint:** `GET /patients/me/journey`
+- **Description:** Aggregates all user milestones chronologically (registration, appointments, consultations, lab investigations, and prescriptions).
+- **Success Response (`200 OK`):**
+  ```json
+  {
+    "journey": [
+      {
+        "type": "APPOINTMENT",
+        "title": "Appointment with Dr. Sarah Connor",
+        "timestamp": "2026-09-14T09:00:00.000Z",
+        "status": "SCHEDULED",
+        "details": {
+          "appointmentId": "c1f72a4d-8012-4299-8cfb-6f68e00185f3",
+          "doctorName": "Dr. Sarah Connor",
+          "specialization": "Cardiology",
+          "department": "Cardiology Department",
+          "startTime": "2026-09-14T09:00:00.000Z",
+          "endTime": "2026-09-14T09:30:00.000Z"
+        }
+      },
+      {
+        "type": "REGISTRATION",
+        "title": "Patient Registered",
+        "timestamp": "2026-09-13T09:38:59.852Z",
+        "details": {
+          "name": "Jane Doe",
+          "email": "jane@example.com"
+        }
+      }
+    ]
+  }
+  ```
 
-`POST /auth/logout`
+### 2.7 Patient Consultations
+- **Endpoint:** `GET /patients/me/consultations`
+- **Success Response (`200 OK`):**
+  ```json
+  {
+    "consultations": [
+      {
+        "id": "3b290744-934c-4ec9-86c2-19e34c97fb48",
+        "diagnosis": "Mild hypertension",
+        "notes": "Patient reported occasional dizziness",
+        "treatment_plan": "Lifestyle adjustments and BP monitoring",
+        "created_at": "2026-09-13T10:30:00.000Z",
+        "updated_at": "2026-09-13T10:30:00.000Z",
+        "doctor_id": "d3b07384-d113-40e9-a477-94a55dc0ebf0",
+        "doctor_name": "Dr. Sarah Connor",
+        "doctor_specialization": "Cardiology",
+        "doctor_department": "Cardiology Department",
+        "prescriptions": []
+      }
+    ]
+  }
+  ```
 
-Requires a bearer token. The token is revoked until its original expiry time.
+### 2.8 Patient Prescriptions
+- **Endpoint:** `GET /patients/me/prescriptions`
+- **Success Response (`200 OK`):**
+  ```json
+  {
+    "prescriptions": [
+      {
+        "id": "f51ae039-38b9-43c3-9877-3e1cb07c9172",
+        "consultation_id": "3b290744-934c-4ec9-86c2-19e34c97fb48",
+        "medication": "Amlodipine",
+        "dosage": "5mg",
+        "frequency": "Once daily",
+        "duration": "30 days",
+        "instructions": "Take after breakfast",
+        "created_at": "2026-09-13T10:30:00.000Z",
+        "doctor_id": "d3b07384-d113-40e9-a477-94a55dc0ebf0",
+        "doctor_name": "Dr. Sarah Connor",
+        "doctor_specialization": "Cardiology"
+      }
+    ]
+  }
+  ```
 
-Response:
+### 2.9 Patient Lab Reports
+- **Endpoint:** `GET /patients/me/reports`
+- **Success Response (`200 OK`):**
+  ```json
+  {
+    "reports": [
+      {
+        "id": "9924c8b2-38b9-43c3-9877-1e1cb07c9172",
+        "test_name": "Lipid Panel",
+        "instructions": "12-hour fasting required",
+        "status": "PENDING",
+        "result": null,
+        "created_at": "2026-09-13T10:35:00.000Z",
+        "updated_at": "2026-09-13T10:35:00.000Z",
+        "doctor_id": "d3b07384-d113-40e9-a477-94a55dc0ebf0",
+        "doctor_name": "Dr. Sarah Connor",
+        "doctor_department": "Cardiology Department"
+      }
+    ]
+  }
+  ```
 
-```json
-{
-	"message": "Logged out successfully"
-}
-```
+### 2.10 Patient Queue (Excluded)
+| Method | Endpoint | Status |
+| :--- | :--- | :--- |
+| `GET` | `/patients/me/queue` | `501 Not Implemented` |
 
-### Other authentication endpoints
+---
 
-The following routes are registered but not implemented yet:
+## 3. Doctor Module (`/doctors`)
 
-| Method | Endpoint | Payload | Status |
-| --- | --- | --- |
-| `POST` | `/auth/refresh` | Not implemented | `501` |
-| `POST` | `/auth/forgot-password` | `{ "email": "patient@example.com" }` | `501` |
-| `POST` | `/auth/reset-password` | `{ "token": "uuid", "password": "newpassword" }` | `501` |
+All doctor endpoints require `Authorization: Bearer <token>` with `role: "DOCTOR"` (except `POST /doctors/login`).
 
-## Patient endpoints
+### 3.1 Doctor Login
+- **Endpoint:** `POST /doctors/login`
+- **Access:** Public
+- **Request Body:**
+  ```json
+  {
+    "email": "doctor@hospital.org",
+    "password": "password123"
+  }
+  ```
+- **Success Response (`200 OK`):**
+  ```json
+  {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6...",
+    "doctor": {
+      "id": "d3b07384-d113-40e9-a477-94a55dc0ebf0",
+      "name": "Dr. Sarah Connor",
+      "email": "doctor@hospital.org",
+      "specialization": "Cardiology",
+      "department": "Cardiology Department",
+      "createdAt": "2026-09-13T08:00:00.000Z"
+    }
+  }
+  ```
 
-All patient endpoints require a bearer token and the `PATIENT` role. A token with the legacy `USER` role is also accepted for patient endpoints.
+### 3.2 Doctor Profile
+- **Get Profile:** `GET /doctors/me` $\rightarrow$ returns doctor details.
+- **Update Profile:** `PATCH /doctors/me`
+  - **Request Body:**
+    ```json
+    {
+      "name": "Dr. Sarah Connor",
+      "specialization": "Cardiology",
+      "department": "Cardiology Department"
+    }
+    ```
+  - **Allowed Specializations:**
+    `"Cardiology"`, `"Dermatology"`, `"Neurology"`, `"Pediatrics"`, `"Psychiatry"`, `"Radiology"`, `"Surgery"`, `"Urology"`, `"Oncology"`, `"Orthopedics"`.
 
-| Method | Endpoint | Payload | Status |
-| --- | --- | --- |
-| `GET` | `/patients/me` | None | `200` |
-| `PATCH` | `/patients/me` | See profile update below | `200` |
-| `GET` | `/patients/me/appointments` | None | `200` |
-| `POST` | `/patients/appointments` | See appointment booking below | `201` |
-| `DELETE` | `/patients/appointments/:appointmentId` | None | `200` |
-| `GET` | `/patients/me/queue` | None | `501` |
-| `GET` | `/patients/me/journey` | None | `200` |
-| `GET` | `/patients/me/consultations` | None | `200` |
-| `GET` | `/patients/me/reports` | None | `200` |
-| `GET` | `/patients/me/prescriptions` | None | `200` |
+### 3.3 Doctor Daily Schedule
+- **Endpoint:** `GET /doctors/me/schedule`
+- **Success Response (`200 OK`):**
+  ```json
+  {
+    "schedule": [
+      {
+        "id": "c1f72a4d-8012-4299-8cfb-6f68e00185f3",
+        "start_time": "2026-09-14T09:00:00.000Z",
+        "end_time": "2026-09-14T09:30:00.000Z",
+        "created_at": "2026-09-13T10:00:00.000Z",
+        "patient_id": "eaf3fb17-176f-4776-afff-7d59a1ed7e16",
+        "patient_name": "Jane Doe",
+        "patient_age": 30,
+        "patient_gender": "Female",
+        "patient_type": "Online"
+      }
+    ]
+  }
+  ```
 
-Patient profile update:
+### 3.4 Doctor Patient Roster
+- **Endpoint:** `GET /doctors/me/patients`
+- **Success Response (`200 OK`):**
+  ```json
+  {
+    "patients": [
+      {
+        "id": "eaf3fb17-176f-4776-afff-7d59a1ed7e16",
+        "name": "Jane Doe",
+        "age": 30,
+        "gender": "Female",
+        "patient_type": "Online",
+        "created_at": "2026-09-13T09:40:07.416Z",
+        "owner_email": "jane@example.com"
+      }
+    ]
+  }
+  ```
 
-```json
-{
-	"name": "John Connor",
-	"age": 36,
-	"gender": "Male",
-	"patientType": "Online",
-	"doctorId": "doctor-uuid"
-}
-```
+### 3.5 Patient Medical Chart
+- **Endpoint:** `GET /doctors/patients/:patientId`
+- **Success Response (`200 OK`):**
+  ```json
+  {
+    "patient": {
+      "id": "eaf3fb17-176f-4776-afff-7d59a1ed7e16",
+      "name": "Jane Doe",
+      "age": 30,
+      "gender": "Female",
+      "patient_type": "Online",
+      "created_at": "2026-09-13T09:40:07.416Z",
+      "doctor_id": "d3b07384-d113-40e9-a477-94a55dc0ebf0",
+      "owner_email": "jane@example.com"
+    },
+    "appointments": [],
+    "consultations": [],
+    "prescriptions": [],
+    "reports": []
+  }
+  ```
 
-All fields are optional. `gender` is `Male`, `Female`, or `Other`; `patientType` is `Online` or `Walkin`.
+### 3.6 Create Consultation
+- **Endpoint:** `POST /doctors/patients/:patientId/consultation`
+- **Request Body:**
+  ```json
+  {
+    "appointmentId": "c1f72a4d-8012-4299-8cfb-6f68e00185f3",
+    "diagnosis": "Mild hypertension",
+    "notes": "Patient reported dizziness",
+    "treatmentPlan": "Lifestyle changes and BP monitoring",
+    "prescriptions": [
+      {
+        "medication": "Amlodipine",
+        "dosage": "5mg",
+        "frequency": "Once daily",
+        "duration": "30 days",
+        "instructions": "Take after breakfast"
+      }
+    ]
+  }
+  ```
+- **Success Response (`201 Created`):** Returns consultation entity with inserted `prescriptions` array.
 
-Appointment booking:
+### 3.7 Update Consultation
+- **Endpoint:** `PATCH /doctors/consultations/:consultationId`
+- **Request Body (all fields optional):**
+  ```json
+  {
+    "diagnosis": "Stage 1 hypertension",
+    "notes": "Updated note after lab confirmation",
+    "treatmentPlan": "Continue amlodipine 5mg"
+  }
+  ```
+- **Success Response (`200 OK`):** Updated consultation record.
 
-```json
-{
-	"doctorId": "doctor-uuid",
-	"startTime": "2026-09-13T10:00:00.000Z",
-	"endTime": "2026-09-13T10:30:00.000Z"
-}
-```
+### 3.8 Order Lab Test
+- **Endpoint:** `POST /doctors/patients/:patientId/orders`
+- **Request Body:**
+  ```json
+  {
+    "testName": "Complete Blood Count (CBC)",
+    "instructions": "Fasting blood draw"
+  }
+  ```
+- **Success Response (`201 Created`):** Returns created `InvestigationOrder` with `status: "PENDING"`.
 
-Both timestamps must be valid ISO datetime strings, the end must be after the start, and the doctor must not already have an overlapping appointment. Conflicts return `409`.
+### 3.9 Doctor Queue (Excluded)
+| Method | Endpoint | Status |
+| :--- | :--- | :--- |
+| `GET` | `/doctors/me/queue` | `501 Not Implemented` |
+| `POST` | `/doctors/queue/:queueEntryId/complete` | `501 Not Implemented` |
+| `POST` | `/doctors/queue/:queueEntryId/skip` | `501 Not Implemented` |
 
-## Doctor endpoints
+---
 
-Doctor login does not require an existing token. All other implemented doctor endpoints require a bearer token with the `DOCTOR` role.
+## 4. Admin Module (`/admin`)
 
-| Method | Endpoint | Payload | Status |
-| --- | --- | --- |
-| `POST` | `/doctors/login` | `{ "email": "doctor@example.com", "password": "password123" }` | `200` |
-| `GET` | `/doctors/me` | None | `200` |
-| `PATCH` | `/doctors/me` | See doctor profile update below | `200` |
-| `GET` | `/doctors/me/schedule` | None | `200` |
-| `GET` | `/doctors/me/queue` | None | `501` |
-| `GET` | `/doctors/me/patients` | None | `200` |
-| `GET` | `/doctors/patients/:patientId` | None | `200` |
-| `POST` | `/doctors/patients/:patientId/consultation` | See consultation below | `201` |
-| `PATCH` | `/doctors/consultations/:consultationId` | See consultation update below | `200` |
-| `POST` | `/doctors/patients/:patientId/orders` | See investigation order below | `201` |
-| `GET` | `/doctors/patients/:patientId/reports` | None | `200` |
-| `POST` | `/doctors/queue/:queueEntryId/complete` | Not implemented | `501` |
-| `POST` | `/doctors/queue/:queueEntryId/skip` | Not implemented | `501` |
+All admin routes except `/admin/login` require `Authorization: Bearer <token>` with `role: "ADMIN"`.
 
-Doctor profile update:
+| Method | Endpoint | Access | Description |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/admin/login` | Public | Authenticates admin user |
+| `POST` | `/admin/doctors` | `ADMIN` | Registers a new doctor with specialization & department |
+| `GET` | `/admin/doctors` | `ADMIN` | Lists all registered doctors |
+| `GET` | `/admin/patients`| `ADMIN` | Lists all hospital patients |
 
-```json
-{
-	"name": "Dr. Sarah Connor",
-	"specialization": "Cardiology",
-	"department": "Cardiology Department"
-}
-```
+---
 
-All fields are optional. Specialization must be one of the values defined by the doctor schema, such as `Cardiology`, `Neurology`, or `Pediatrics`.
+## 5. Real-Time WebSocket (`ws://` / `wss://`)
 
-Create consultation:
-
-```json
-{
-	"appointmentId": "appointment-uuid",
-	"diagnosis": "Mild hypertension",
-	"notes": "Patient reported occasional dizziness",
-	"treatmentPlan": "Monitor BP twice daily",
-	"prescriptions": [
-		{
-			"medication": "Amlodipine",
-			"dosage": "5mg",
-			"frequency": "Once daily",
-			"duration": "30 days",
-			"instructions": "Take after breakfast"
-		}
-	]
-}
-```
-
-Only `diagnosis` is required. Creating a consultation also creates any supplied prescriptions.
-
-Consultation update:
-
-```json
-{
-	"diagnosis": "Updated diagnosis",
-	"notes": "Updated clinical notes",
-	"treatmentPlan": "Updated treatment plan"
-}
-```
-
-Investigation order:
-
-```json
-{
-	"testName": "Complete blood count",
-	"instructions": "Fasting sample"
-}
-```
-
-`testName` is required. New investigation orders start with `PENDING` status.
-
-## Sending the token
-
-Send the JWT in the `Authorization` header for protected endpoints:
-
-```ts
-const response = await fetch(`${API_URL}/patients/me`, {
-	headers: {
-		Authorization: `Bearer ${token}`,
-	},
-});
-```
-
-Missing or invalid tokens return `401`. A valid token with the wrong role returns `403`. A revoked token also returns `401`.
-
-## Current status codes
-
-| Status | Meaning |
-| --- | --- |
-| `200` | Request succeeded, where implemented |
-| `201` | Resource created successfully |
-| `400` | Request validation failed or business rule rejected the request |
-| `401` | Authentication is missing, invalid, expired, or revoked |
-| `403` | Authenticated user does not have the required role or ownership |
-| `404` | Requested user, doctor, patient, or appointment was not found |
-| `409` | Appointment time conflicts with an existing appointment |
-| `501` | Queue or unfinished authentication endpoint |
-
-Errors are returned as JSON:
-
-```json
-{
-	"message": "Human-readable error message"
-}
-```
+- **Connection URL:**
+  - Local: `ws://localhost:3000`
+  - Production: `wss://hospital-flow-l825.onrender.com`
+- **Capabilities:**
+  - Real-time notifications for appointment updates, consultation recordings, and queue notifications.

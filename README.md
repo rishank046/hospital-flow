@@ -42,6 +42,13 @@ Because team members leverage AI coding assistants (ChatGPT, Claude, Cursor, Git
 
 ---
 
+## 🌐 Live Deployments
+
+- **Backend API (Render):** [https://hospital-flow-l825.onrender.com](https://hospital-flow-l825.onrender.com)
+- **API Documentation:** [`docs/api.md`](docs/api.md)
+
+---
+
 ## 🚀 Getting Started
 
 ### Backend (`apps/api`)
@@ -53,16 +60,35 @@ openssl rand -hex 32
 npm install
 npm run dev
 ```
-Runs on `http://localhost:3000`.
+Local server runs on `http://localhost:3000`.
 
 ### Frontend (`apps/web`)
 ```bash
 cd apps/web
 cp .env.example .env
+# To point to local backend: VITE_API_BASE_URL=http://localhost:3000
+# To point to live Render backend: VITE_API_BASE_URL=https://hospital-flow-l825.onrender.com
 npm install
 npm run dev
 ```
-Runs on `http://localhost:5173`.
+Development client runs on `http://localhost:5173`.
+
+---
+
+## ☁️ Deployment Configurations
+
+### Render (Backend Web Service)
+- **Root Directory:** `apps/api`
+- **Build Command:** `npm install --include=dev`
+- **Start Command:** `npm start`
+- **Environment Variables:** `DATABASE_URL`, `JWT_SECRET` (min 32 chars), `NODE_VERSION=20`
+
+### Vercel (Frontend Web App)
+- **Root Directory:** `apps/web`
+- **Framework Preset:** Vite
+- **Build Command:** `npm run build`
+- **Output Directory:** `dist`
+- **Environment Variables:** `VITE_API_BASE_URL=https://hospital-flow-l825.onrender.com`
 
 ---
 

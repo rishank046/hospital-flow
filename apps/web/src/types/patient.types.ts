@@ -97,6 +97,7 @@ export interface Consultation {
   doctorId?: string;
   doctor_id?: string;
   doctorName?: string;
+  doctor_name?: string;
   patientId?: string;
   patient_id?: string;
   appointmentId?: string;
