@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 
@@ -8,12 +9,27 @@ interface ProtectedRouteProps {
 
 export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
   const { isAuthenticated, role, loading } = useAuth();
+  const is401Ref = useRef(false);
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      is401Ref.current = true;
+    };
+
+    window.addEventListener('auth:unauthorized', handleUnauthorized);
+    return () => {
+      window.removeEventListener('auth:unauthorized', handleUnauthorized);
+    };
+  }, []);
 
   if (loading) {
     return <div className="loading-screen">Loading session...</div>;
   }
 
   if (!isAuthenticated) {
+    if (is401Ref.current || sessionStorage.getItem('session_expired') === 'true') {
+      sessionStorage.setItem('session_expired', 'true');
+    }
     window.location.href = '/login';
     return null;
   }

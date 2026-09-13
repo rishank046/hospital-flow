@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Calendar } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { DashboardLayout } from '../../components/layout/DashboardLayout';
 import { Card } from '../../components/common/Card';
@@ -116,7 +117,11 @@ export function PatientDashboard() {
                         'Hospital Outpatient Department'}
                     </p>
                     <span className="next-apt-time">
-                      📅{' '}
+                      <Calendar
+                        size={16}
+                        aria-hidden="true"
+                        style={{ display: 'inline-block', verticalAlign: 'text-bottom', marginRight: '6px' }}
+                      />
                       {new Date(
                         nextAppointment.startTime || nextAppointment.start_time || ''
                       ).toLocaleString([], {

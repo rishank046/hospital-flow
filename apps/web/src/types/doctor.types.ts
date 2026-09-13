@@ -1,4 +1,4 @@
-import type { Consultation, Prescription } from './patient.types';
+import type { Consultation } from './patient.types';
 
 export interface DoctorProfile {
   id: string;

@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
+import { Heart, Plus, Sparkles } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { authService } from '../../services/auth.service';
+import { Alert } from '../../components/common/Alert';
 import type { AccountType, AuthMode } from '../../types/auth.types';
 
 export function LoginPage() {
@@ -18,8 +20,16 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null);
 
   const [currentTime, setCurrentTime] = useState(() => new Date());
+
+  useEffect(() => {
+    if (sessionStorage.getItem('session_expired') === 'true') {
+      setSessionExpiredMessage('Your session has expired. Please sign in again.');
+      sessionStorage.removeItem('session_expired');
+    }
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -221,6 +231,16 @@ export function LoginPage() {
             </p>
           </div>
 
+          {sessionExpiredMessage && (
+            <Alert
+              type="warning"
+              className="mb-4"
+              onClose={() => setSessionExpiredMessage(null)}
+            >
+              {sessionExpiredMessage}
+            </Alert>
+          )}
+
           <div
             className="account-toggle"
             role="tablist"
@@ -233,7 +253,9 @@ export function LoginPage() {
               className={accountType === 'patient' ? 'active' : ''}
               onClick={() => handleAccountTypeChange('patient')}
             >
-              <span className="toggle-icon">♡</span>
+              <span className="toggle-icon" aria-hidden="true">
+                <Heart size={14} aria-hidden="true" />
+              </span>
               Patient
             </button>
 
@@ -244,14 +266,18 @@ export function LoginPage() {
               className={accountType === 'doctor' ? 'active' : ''}
               onClick={() => handleAccountTypeChange('doctor')}
             >
-              <span className="toggle-icon">✚</span>
+              <span className="toggle-icon" aria-hidden="true">
+                <Plus size={14} aria-hidden="true" />
+              </span>
               Doctor
             </button>
           </div>
 
           {mode === 'register' && (
             <div className="info-banner">
-              <span>✦</span>
+              <span aria-hidden="true">
+                <Sparkles size={16} aria-hidden="true" />
+              </span>
 
               <div>
                 <strong>Patient registration</strong>
