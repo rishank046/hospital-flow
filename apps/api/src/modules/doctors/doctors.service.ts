@@ -12,31 +12,15 @@ import type {
 
 interface DoctorRow {
     id: string;
-    name: string;
-    email: string;
-    password: string;
+    name?: string | null;
+    email?: string | null;
+    password?: string | null;
     specialization: string;
-    department: string;
+    department?: string | null;
     created_at: Date;
 }
 
-export async function doctorLoginService(data: DoctorLoginInput) {
-    const result = await pool.query<DoctorRow>(
-        'SELECT id, name, email, password, specialization, department, created_at FROM "Doctor" WHERE email = $1',
-        [data.email]
-    );
-
-    if (result.rowCount === 0 || !result.rows[0]) {
-        throw new AppError("Invalid email or password", 401);
-    }
-
-    const doctor = result.rows[0];
-    const passwordMatch = await bcrypt.compare(data.password, doctor.password);
-
-    if (!passwordMatch) {
-        throw new AppError("Invalid email or password", 401);
-    }
-
+function getJwtSecret(): string {
     const jwtSecret = process.env.JWT_SECRET;
     const normalizedSecret = jwtSecret?.toLowerCase();
     if (
@@ -48,12 +32,118 @@ export async function doctorLoginService(data: DoctorLoginInput) {
     ) {
         throw new AppError("JWT secret is not configured or too weak", 500);
     }
+    return jwtSecret;
+}
 
+export async function resolveDoctorId(userIdOrDoctorId: string): Promise<string> {
+    // 1. Check if matches Staff -> Doctor
+    const staffDocRes = await pool.query<{ id: string }>(
+        `SELECT d.id 
+         FROM "Doctor" d
+         JOIN "Staff" s ON d.staff_id = s.id
+         WHERE s.user_id = $1`,
+        [userIdOrDoctorId]
+    );
+
+    if (staffDocRes.rowCount && staffDocRes.rows[0]) {
+        return staffDocRes.rows[0].id;
+    }
+
+    // 2. Direct match on Doctor id (for legacy/test setups)
+    const directDocRes = await pool.query<{ id: string }>(
+        'SELECT id FROM "Doctor" WHERE id = $1',
+        [userIdOrDoctorId]
+    );
+
+    if (directDocRes.rowCount && directDocRes.rows[0]) {
+        return directDocRes.rows[0].id;
+    }
+
+    throw new AppError("Doctor profile not found for this authenticated account", 404);
+}
+
+export async function doctorLoginService(data: DoctorLoginInput) {
+    // 1. Check User table joined with Staff and Doctor
+    const staffUserRes = await pool.query(
+        `SELECT 
+            u.id as user_id, 
+            u.name, 
+            u.email, 
+            u.password, 
+            s.id as staff_id,
+            s.role as staff_role,
+            s.status as staff_status,
+            d.id as doctor_id, 
+            d.specialization, 
+            COALESCE(dept.name, d.department) as department,
+            d.created_at
+         FROM "User" u
+         JOIN "Staff" s ON s.user_id = u.id
+         JOIN "Doctor" d ON d.staff_id = s.id
+         LEFT JOIN "Department" dept ON d.department_id = dept.id
+         WHERE u.email = $1`,
+        [data.email]
+    );
+
+    if (staffUserRes.rowCount && staffUserRes.rows[0]) {
+        const row = staffUserRes.rows[0];
+        if (row.staff_status !== "ACTIVE") {
+            throw new AppError("Doctor staff account is inactive", 403);
+        }
+        const passwordMatch = await bcrypt.compare(data.password, row.password);
+        if (!passwordMatch) {
+            throw new AppError("Invalid email or password", 401);
+        }
+
+        const jwtSecret = getJwtSecret();
+        const token = jwt.sign(
+            {
+                userId: row.user_id,
+                email: row.email,
+                role: "STAFF",
+                staffRole: "DOCTOR",
+            },
+            jwtSecret,
+            { expiresIn: "8h" }
+        );
+
+        return {
+            token,
+            doctor: {
+                id: row.doctor_id,
+                name: row.name,
+                email: row.email,
+                specialization: row.specialization,
+                department: row.department,
+                createdAt: row.created_at,
+            },
+        };
+    }
+
+    // 2. Direct Doctor table fallback (for legacy seed)
+    const result = await pool.query<DoctorRow>(
+        'SELECT id, name, email, password, specialization, department, created_at FROM "Doctor" WHERE email = $1',
+        [data.email]
+    );
+
+    const doctor = result.rows[0];
+    if (!doctor || !doctor.password) {
+        throw new AppError("Invalid email or password", 401);
+    }
+
+    const passwordMatch = await bcrypt.compare(data.password, doctor.password);
+
+    if (!passwordMatch) {
+        throw new AppError("Invalid email or password", 401);
+    }
+
+    const jwtSecret = getJwtSecret();
     const token = jwt.sign(
         {
             userId: doctor.id,
-            email: doctor.email,
-            role: "DOCTOR",
+            email: doctor.email ?? data.email,
+            role: "STAFF",
+            staffRole: "DOCTOR",
         },
         jwtSecret,
         { expiresIn: "8h" }
@@ -63,18 +153,51 @@ export async function doctorLoginService(data: DoctorLoginInput) {
         token,
         doctor: {
             id: doctor.id,
-            name: doctor.name,
-            email: doctor.email,
+            name: doctor.name ?? "Doctor",
+            email: doctor.email ?? data.email,
             specialization: doctor.specialization,
-            department: doctor.department,
+            department: doctor.department ?? "General",
             createdAt: doctor.created_at,
         },
     };
 }
 
+export async function listPublicDoctorsService() {
+    const result = await pool.query(
+        `SELECT 
+            d.id, 
+            COALESCE(u.name, d.name) as name, 
+            COALESCE(u.email, d.email) as email, 
+            d.specialization, 
+            COALESCE(dept.name, d.department) as department, 
+            d.license_number,
+            d.created_at
+         FROM "Doctor" d
+         LEFT JOIN "Staff" s ON d.staff_id = s.id
+         LEFT JOIN "User" u ON s.user_id = u.id
+         LEFT JOIN "Department" dept ON d.department_id = dept.id
+         ORDER BY d.created_at DESC`
+    );
+
+    return { doctors: result.rows };
+}
+
 export async function getDoctorProfileService(doctorId: string) {
     const result = await pool.query(
-        'SELECT id, name, email, specialization, department, created_at FROM "Doctor" WHERE id = $1',
+        `SELECT 
+            d.id, 
+            COALESCE(u.name, d.name) as name, 
+            COALESCE(u.email, d.email) as email, 
+            d.specialization, 
+            COALESCE(dept.name, d.department) as department, 
+            d.license_number,
+            d.staff_id,
+            d.created_at
+         FROM "Doctor" d
+         LEFT JOIN "Staff" s ON d.staff_id = s.id
+         LEFT JOIN "User" u ON s.user_id = u.id
+         LEFT JOIN "Department" dept ON d.department_id = dept.id
+         WHERE d.id = $1`,
         [doctorId]
     );
 
@@ -89,8 +212,11 @@ export async function updateDoctorProfileService(
     doctorId: string,
     data: UpdateDoctorProfileInput
 ) {
-    const existing = await pool.query<DoctorRow>(
-        'SELECT id, name, email, specialization, department FROM "Doctor" WHERE id = $1',
+    const existing = await pool.query(
+        `SELECT d.id, d.staff_id, d.specialization, d.department, s.user_id 
+         FROM "Doctor" d
+         LEFT JOIN "Staff" s ON d.staff_id = s.id
+         WHERE d.id = $1`,
         [doctorId]
     );
 
@@ -99,22 +225,31 @@ export async function updateDoctorProfileService(
     }
 
     const current = existing.rows[0];
-    const updated = await pool.query(
+
+    // If name is provided and user is linked, update User table
+    if (data.name && current.user_id) {
+        await pool.query('UPDATE "User" SET name = $1 WHERE id = $2', [
+            data.name,
+            current.user_id,
+        ]);
+    }
+
+    // Update Doctor table
+    await pool.query(
         `UPDATE "Doctor"
-         SET name = $1,
-             specialization = $2,
-             department = $3
-         WHERE id = $4
-         RETURNING id, name, email, specialization, department, created_at`,
+         SET name = COALESCE($1, name),
+             specialization = COALESCE($2, specialization),
+             department = COALESCE($3, department)
+         WHERE id = $4`,
         [
-            data.name ?? current.name,
-            data.specialization ?? current.specialization,
-            data.department ?? current.department,
+            data.name ?? null,
+            data.specialization ?? null,
+            data.department ?? null,
             doctorId,
         ]
     );
 
-    return updated.rows[0];
+    return getDoctorProfileService(doctorId);
 }
 
 export async function getDoctorScheduleService(doctorId: string) {

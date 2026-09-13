@@ -1,5 +1,7 @@
-export type UserRole = 'PATIENT' | 'DOCTOR' | 'ADMIN';
-export type AccountType = 'patient' | 'doctor';
+export type StaffRole = 'DOCTOR' | 'NURSE' | 'RECEPTIONIST' | 'LAB_STAFF' | 'PHARMACIST';
+export type StaffStatus = 'ACTIVE' | 'INACTIVE' | 'ON_LEAVE';
+export type UserRole = 'PATIENT' | 'DOCTOR' | 'STAFF' | 'ADMIN';
+export type AccountType = 'patient' | 'doctor' | 'staff';
 export type AuthMode = 'login' | 'register';
 
 export interface AuthUser {
@@ -7,6 +9,8 @@ export interface AuthUser {
   email: string;
   name?: string;
   role: UserRole;
+  staffRole?: StaffRole;
+  employeeCode?: string;
   specialization?: string;
   department?: string;
 }
@@ -34,6 +38,13 @@ export interface AuthTokenResponse {
     name?: string;
     email?: string;
     role?: string;
+    staffRole?: StaffRole;
+  };
+  staff?: {
+    id: string;
+    employeeCode: string;
+    role: StaffRole;
+    status: StaffStatus;
   };
   doctor?: {
     id: string;

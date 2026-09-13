@@ -14,12 +14,13 @@ import { DoctorDashboard } from './pages/doctor/DoctorDashboard';
 import { DoctorSchedulePage } from './pages/doctor/DoctorSchedulePage';
 import { DoctorPatientsPage } from './pages/doctor/DoctorPatientsPage';
 import { DoctorPatientDetailPage } from './pages/doctor/DoctorPatientDetailPage';
+import { StaffPortalPage } from './pages/staff/StaffPortalPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import './App.css';
 
 function Router() {
   const [path, setPath] = useState(() => window.location.pathname);
-  const { isAuthenticated, role } = useAuth();
+  const { isAuthenticated, role, staffRole } = useAuth();
 
   useEffect(() => {
     const onPopState = () => setPath(window.location.pathname);
@@ -30,11 +31,21 @@ function Router() {
   // Public authentication routes
   if (path === '/' || path === '/login') {
     if (isAuthenticated && role) {
-      return role === 'DOCTOR' ? (
-        <ProtectedRoute allowedRoles={['DOCTOR']}>
-          <DoctorDashboard />
-        </ProtectedRoute>
-      ) : (
+      if (role === 'DOCTOR' || (role === 'STAFF' && staffRole === 'DOCTOR')) {
+        return (
+          <ProtectedRoute allowedRoles={['DOCTOR', 'STAFF']}>
+            <DoctorDashboard />
+          </ProtectedRoute>
+        );
+      }
+      if (role === 'STAFF') {
+        return (
+          <ProtectedRoute allowedRoles={['STAFF']}>
+            <StaffPortalPage />
+          </ProtectedRoute>
+        );
+      }
+      return (
         <ProtectedRoute allowedRoles={['PATIENT']}>
           <PatientDashboard />
         </ProtectedRoute>
@@ -92,10 +103,19 @@ function Router() {
     );
   }
 
+  // Staff protected routes
+  if (path === '/staff' || path === '/staff/dashboard') {
+    return (
+      <ProtectedRoute allowedRoles={['STAFF', 'DOCTOR']}>
+        <StaffPortalPage />
+      </ProtectedRoute>
+    );
+  }
+
   // Doctor protected routes
   if (path === '/doctor' || path === '/doctor/dashboard') {
     return (
-      <ProtectedRoute allowedRoles={['DOCTOR']}>
+      <ProtectedRoute allowedRoles={['DOCTOR', 'STAFF']}>
         <DoctorDashboard />
       </ProtectedRoute>
     );
@@ -103,7 +123,7 @@ function Router() {
 
   if (path === '/doctor/schedule') {
     return (
-      <ProtectedRoute allowedRoles={['DOCTOR']}>
+      <ProtectedRoute allowedRoles={['DOCTOR', 'STAFF']}>
         <DoctorSchedulePage />
       </ProtectedRoute>
     );
@@ -111,7 +131,7 @@ function Router() {
 
   if (path === '/doctor/patients') {
     return (
-      <ProtectedRoute allowedRoles={['DOCTOR']}>
+      <ProtectedRoute allowedRoles={['DOCTOR', 'STAFF']}>
         <DoctorPatientsPage />
       </ProtectedRoute>
     );
@@ -120,7 +140,7 @@ function Router() {
   if (path.startsWith('/doctor/patients/')) {
     const patientId = path.replace('/doctor/patients/', '').split('/')[0];
     return (
-      <ProtectedRoute allowedRoles={['DOCTOR']}>
+      <ProtectedRoute allowedRoles={['DOCTOR', 'STAFF']}>
         <DoctorPatientDetailPage patientId={patientId} />
       </ProtectedRoute>
     );

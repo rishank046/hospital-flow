@@ -4,6 +4,8 @@ import adminRoute from "#modules/admin/admin.route.js";
 import authRoute from "#modules/auth/auth.route.js";
 import patientsRoute from "#modules/patients/patients.route.js";
 import doctorRoute from "#modules/doctors/doctors.route.js";
+import staffRoute from "#modules/staff/staff.route.js";
+import queueRoute from "#modules/queue/queue.route.js";
 import errorHandler from "#utils/errorHandler.js";
 
 const app = express();
@@ -14,6 +16,8 @@ app.use("/admin", adminRoute);
 app.use("/auth", authRoute);
 app.use("/patients", patientsRoute);
 app.use("/doctors", doctorRoute);
+app.use("/staff", staffRoute);
+app.use("/queue", queueRoute);
 app.use(errorHandler);
 
 export default app;

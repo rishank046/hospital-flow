@@ -26,3 +26,13 @@ export const createDoctorSchema = z.object({
 
 export type AdminLoginInput = z.infer<typeof adminLoginSchema>;
 export type CreateDoctorInput = z.infer<typeof createDoctorSchema>;
+
+export {
+    createStaffSchema,
+    updateStaffSchema,
+    updateStaffStatusSchema,
+    staffIdParamSchema,
+    type CreateStaffInput,
+    type UpdateStaffInput,
+    type UpdateStaffStatusInput,
+} from "#modules/staff/staff.schema.js";

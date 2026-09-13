@@ -38,7 +38,11 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps = {}) {
     { label: 'Assigned Patients', href: '/doctor/patients', icon: Users },
   ];
 
-  const navItems = role === 'DOCTOR' ? doctorNav : patientNav;
+  const staffNav: NavItem[] = [
+    { label: 'Staff Portal', href: '/staff', icon: LayoutDashboard },
+  ];
+
+  const navItems = role === 'DOCTOR' ? doctorNav : role === 'STAFF' ? staffNav : patientNav;
 
   const navigate = (href: string, e: MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
@@ -54,7 +58,7 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps = {}) {
   return (
     <aside className={`app-sidebar ${isOpen ? 'open' : ''}`} aria-label="Portal Navigation">
       <div className="sidebar-section-title">
-        {role === 'DOCTOR' ? 'Doctor Workspace' : 'Patient Workspace'}
+        {role === 'DOCTOR' ? 'Doctor Workspace' : role === 'STAFF' ? 'Staff Workspace' : 'Patient Workspace'}
       </div>
       <nav className="sidebar-nav">
         {navItems.map((item) => {

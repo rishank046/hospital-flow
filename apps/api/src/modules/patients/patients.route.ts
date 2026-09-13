@@ -1,20 +1,29 @@
 import express from "express";
 import {
-	bookAppointment,
-	cancelAppointment,
-	getMyAppointments,
-	getMyConsultations,
-	getMyJourney,
-	getMyPrescriptions,
-	getMyProfile,
-	getMyQueueStatus,
-	getMyReports,
-	updateMyProfile,
+    bookAppointment,
+    cancelAppointment,
+    createPatient,
+    getMyAppointments,
+    getMyConsultations,
+    getMyJourney,
+    getMyPrescriptions,
+    getMyProfile,
+    getMyQueueStatus,
+    getMyReports,
+    getPatientById,
+    listMyPatients,
+    updateMyProfile,
+    updatePatientById,
 } from "#modules/patients/patients.controller.js";
 import { authenticate, requireRole } from "#middleware/auth.middleware.js";
 import wrapper from "#utils/wrapper.js";
 
 const router = express.Router();
+
+router.get("/", authenticate, requireRole("USER"), wrapper(listMyPatients));
+router.post("/", authenticate, requireRole("USER"), wrapper(createPatient));
+router.get("/byId/:patientId", authenticate, wrapper(getPatientById));
+router.patch("/byId/:patientId", authenticate, requireRole("USER"), wrapper(updatePatientById));
 
 router.get("/me", authenticate, requireRole("PATIENT"), wrapper(getMyProfile));
 
