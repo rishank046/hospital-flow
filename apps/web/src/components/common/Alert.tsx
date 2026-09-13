@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import type { ElementType, ReactNode } from 'react';
+import { Info, CheckCircle, AlertTriangle, AlertCircle, X } from 'lucide-react';
 
 export type AlertType = 'info' | 'success' | 'warning' | 'error';
 
@@ -11,11 +12,11 @@ export interface AlertProps {
   className?: string;
 }
 
-const iconMap: Record<AlertType, string> = {
-  info: 'ℹ',
-  success: '✓',
-  warning: '⚠',
-  error: '✕',
+const iconMap: Record<AlertType, ElementType> = {
+  info: Info,
+  success: CheckCircle,
+  warning: AlertTriangle,
+  error: AlertCircle,
 };
 
 export function Alert({
@@ -27,11 +28,12 @@ export function Alert({
   className = '',
 }: AlertProps) {
   const role = type === 'error' ? 'alert' : 'status';
+  const IconComponent = iconMap[type];
 
   return (
     <div className={`alert-banner alert-${type} ${className}`} role={role}>
       <div className="alert-icon" aria-hidden="true">
-        {iconMap[type]}
+        <IconComponent size={18} aria-hidden="true" />
       </div>
       <div className="alert-body">
         {title && <h4 className="alert-title">{title}</h4>}
@@ -53,7 +55,7 @@ export function Alert({
           onClick={onClose}
           aria-label="Dismiss alert"
         >
-          ✕
+          <X size={16} aria-hidden="true" />
         </button>
       )}
     </div>

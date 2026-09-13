@@ -2,7 +2,12 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { Badge } from '../common/Badge';
 
-export function Navbar() {
+export interface NavbarProps {
+  isSidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
+}
+
+export function Navbar({ isSidebarOpen = false, onToggleSidebar }: NavbarProps = {}) {
   const { user, role, logout } = useAuth();
   const [time, setTime] = useState(() => new Date());
 
@@ -18,6 +23,19 @@ export function Navbar() {
   return (
     <header className="app-navbar">
       <div className="navbar-brand">
+        {onToggleSidebar && (
+          <button
+            type="button"
+            className="hamburger-toggle"
+            onClick={onToggleSidebar}
+            aria-label="Toggle navigation"
+            aria-expanded={isSidebarOpen}
+          >
+            <span className="hamburger-bar" />
+            <span className="hamburger-bar" />
+            <span className="hamburger-bar" />
+          </button>
+        )}
         <a href={role === 'DOCTOR' ? '/doctor' : '/patient'} className="brand-link">
           <div className="brand-mark" aria-hidden="true">
             <span />

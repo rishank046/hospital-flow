@@ -11,6 +11,17 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
   const { isAuthenticated, role, loading } = useAuth();
 
   useEffect(() => {
+    const handleUnauthorized = () => {
+      sessionStorage.setItem('session_expired', 'true');
+    };
+
+    window.addEventListener('auth:unauthorized', handleUnauthorized);
+    return () => {
+      window.removeEventListener('auth:unauthorized', handleUnauthorized);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!loading && !isAuthenticated) {
       window.history.pushState({}, '', '/login');
       window.dispatchEvent(new PopStateEvent('popstate'));
