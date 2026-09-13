@@ -55,7 +55,20 @@
 
 ## 2. Staff Module (`/staff`)
 
-### 2.1 Get Current Staff Profile
+### 2.1 Hospital Staff Login
+- **Endpoint:** `POST /staff/login`
+- **Access:** Public (verifies Staff or Admin membership)
+- **Request Body:**
+  ```json
+  {
+    "email": "nurse@hospital.org",
+    "password": "password123"
+  }
+  ```
+- **Response (`200 OK`):**
+  Returns signed JWT with `role: "STAFF"`, `staffRole`, staff record, and optional doctor details. Non-staff accounts receive `403 Forbidden`.
+
+### 2.2 Get Current Staff Profile
 - **Endpoint:** `GET /staff/me`
 - **Access:** Authenticated `STAFF`
 - **Response (`200 OK`):**

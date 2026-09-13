@@ -25,6 +25,12 @@ export const authService = {
       body: JSON.stringify(credentials),
     }),
 
+  staffLogin: (credentials: LoginCredentials) =>
+    request<AuthTokenResponse>('/staff/login', {
+      method: 'POST',
+      body: JSON.stringify(credentials),
+    }),
+
   logout: () =>
     request<{ message: string }>('/auth/logout', {
       method: 'POST',

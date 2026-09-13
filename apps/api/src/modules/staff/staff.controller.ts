@@ -26,3 +26,17 @@ export async function listStaff(_request: Request, response: Response) {
     const staff = await listStaffService();
     response.status(200).json(staff);
 }
+
+export async function staffLogin(request: Request, response: Response) {
+    const { loginSchema } = await import("#modules/auth/auth.schema.js");
+    const { loginService } = await import("#modules/auth/auth.service.js");
+    const parsed = loginSchema.parse(request.body);
+    const result = await loginService(parsed.email, parsed.password);
+
+    // Verify account is staff (including DOCTOR) or ADMIN
+    if (!result.user || (result.user.role !== "STAFF" && result.user.role !== "ADMIN")) {
+        throw new AppError("Access denied: this account is not registered as hospital staff", 403);
+    }
+
+    response.status(200).json(result);
+}
