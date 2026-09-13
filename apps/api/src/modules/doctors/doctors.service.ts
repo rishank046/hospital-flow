@@ -37,13 +37,25 @@ export async function doctorLoginService(data: DoctorLoginInput) {
         throw new AppError("Invalid email or password", 401);
     }
 
+    const jwtSecret = process.env.JWT_SECRET;
+    const normalizedSecret = jwtSecret?.toLowerCase();
+    if (
+        !jwtSecret ||
+        jwtSecret.length < 32 ||
+        normalizedSecret === "default_secret" ||
+        normalizedSecret === "your_jwt_secret_key_minimum_32_chars" ||
+        normalizedSecret === "replace_with_a_random_64_char_secret"
+    ) {
+        throw new AppError("JWT secret is not configured or too weak", 500);
+    }
+
     const token = jwt.sign(
         {
             userId: doctor.id,
             email: doctor.email,
             role: "DOCTOR",
         },
-        process.env.JWT_SECRET || "default_secret",
+        jwtSecret,
         { expiresIn: "8h" }
     );
 
