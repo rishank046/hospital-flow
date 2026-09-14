@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS "User" (
 );
 
 ALTER TABLE "User" ADD COLUMN IF NOT EXISTS role VARCHAR(50) NOT NULL DEFAULT 'USER';
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;
 
 CREATE TABLE IF NOT EXISTS "Admin" (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -62,6 +63,9 @@ CREATE TABLE IF NOT EXISTS "Staff" (
     status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE "Staff" ADD COLUMN IF NOT EXISTS department_id UUID REFERENCES "Department"(id) ON DELETE SET NULL;
+
 
 CREATE TABLE IF NOT EXISTS "Doctor" ( 
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -171,6 +175,99 @@ CREATE TABLE IF NOT EXISTS "Queue" (
     doctor_id UUID REFERENCES "Doctor"(id) ON DELETE CASCADE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE OR REPLACE VIEW users AS SELECT * FROM "User";
+CREATE OR REPLACE VIEW staff_profiles AS SELECT * FROM "Staff";
+CREATE OR REPLACE VIEW doctors AS SELECT * FROM "Doctor";
+
+CREATE TABLE IF NOT EXISTS "visits" (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    patient_id UUID NOT NULL REFERENCES "Patient"(id) ON DELETE CASCADE,
+    visit_type VARCHAR(50) NOT NULL,
+    department_id UUID REFERENCES "Department"(id) ON DELETE SET NULL,
+    appointment_id UUID REFERENCES "Appointment"(id) ON DELETE SET NULL,
+    assigned_doctor_id UUID REFERENCES "Doctor"(id) ON DELETE SET NULL,
+    registered_by UUID REFERENCES "User"(id) ON DELETE SET NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'REGISTERED',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE OR REPLACE VIEW "Visit" AS SELECT * FROM "visits";
+
+CREATE TABLE IF NOT EXISTS "vitals" (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    visit_id UUID REFERENCES "visits"(id) ON DELETE CASCADE,
+    patient_id UUID REFERENCES "Patient"(id) ON DELETE CASCADE,
+    recorded_by UUID REFERENCES "User"(id) ON DELETE SET NULL,
+    temperature NUMERIC,
+    heart_rate INT,
+    blood_pressure VARCHAR(50),
+    respiratory_rate INT,
+    oxygen_saturation NUMERIC,
+    weight NUMERIC,
+    height NUMERIC,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE OR REPLACE VIEW "Vitals" AS SELECT * FROM "vitals";
+
+CREATE TABLE IF NOT EXISTS "invoices" (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    visit_id UUID REFERENCES "visits"(id) ON DELETE CASCADE,
+    patient_id UUID REFERENCES "Patient"(id) ON DELETE CASCADE,
+    amount NUMERIC NOT NULL DEFAULT 0,
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
+    items JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE OR REPLACE VIEW "Invoices" AS SELECT * FROM "invoices";
+CREATE OR REPLACE VIEW "Invoice" AS SELECT * FROM "invoices";
+
+CREATE TABLE IF NOT EXISTS "pharmacy_dispenses" (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    prescription_id UUID NOT NULL REFERENCES "Prescription"(id) ON DELETE CASCADE,
+    dispensed_by UUID REFERENCES "User"(id) ON DELETE SET NULL,
+    dispensed_quantity INT DEFAULT 1,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "invoice_items" (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    invoice_id UUID NOT NULL REFERENCES "invoices"(id) ON DELETE CASCADE,
+    description VARCHAR(255) NOT NULL,
+    item_type VARCHAR(50) NOT NULL,
+    quantity INT NOT NULL DEFAULT 1,
+    unit_price NUMERIC NOT NULL DEFAULT 0,
+    total_price NUMERIC NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE OR REPLACE VIEW "PharmacyDispenses" AS SELECT * FROM "pharmacy_dispenses";
+CREATE OR REPLACE VIEW "InvoiceItems" AS SELECT * FROM "invoice_items";
+CREATE OR REPLACE VIEW pharmacy_dispenses AS SELECT * FROM "pharmacy_dispenses";
+CREATE OR REPLACE VIEW invoice_items AS SELECT * FROM "invoice_items";
+
+ALTER TABLE "QueueEntry" ADD COLUMN IF NOT EXISTS visit_id UUID REFERENCES "visits"(id) ON DELETE SET NULL;
+ALTER TABLE "QueueEntry" ADD COLUMN IF NOT EXISTS called_at TIMESTAMP;
+ALTER TABLE "Consultation" ADD COLUMN IF NOT EXISTS visit_id UUID REFERENCES "visits"(id) ON DELETE SET NULL;
+ALTER TABLE "Prescription" ADD COLUMN IF NOT EXISTS visit_id UUID REFERENCES "visits"(id) ON DELETE SET NULL;
+ALTER TABLE "Prescription" ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'PENDING';
+ALTER TABLE "InvestigationOrder" ADD COLUMN IF NOT EXISTS visit_id UUID REFERENCES "visits"(id) ON DELETE SET NULL;
+ALTER TABLE "InvestigationOrder" ADD COLUMN IF NOT EXISTS performed_by UUID REFERENCES "User"(id) ON DELETE SET NULL;
+
+CREATE OR REPLACE VIEW queue_entries AS SELECT * FROM "QueueEntry";
+CREATE OR REPLACE VIEW consultations AS SELECT * FROM "Consultation";
+CREATE OR REPLACE VIEW prescriptions AS SELECT * FROM "Prescription";
+CREATE OR REPLACE VIEW investigation_orders AS SELECT * FROM "InvestigationOrder";
+CREATE OR REPLACE VIEW appointments AS SELECT * FROM "Appointment";
+CREATE OR REPLACE VIEW patients AS SELECT * FROM "Patient";
+CREATE OR REPLACE VIEW departments AS SELECT * FROM "Department";
 `;
 
 export default query;
+

@@ -95,7 +95,8 @@ export async function createConsultation(request: Request, response: Response) {
     const doctorId = await getDoctorId(request);
     const { patientId } = patientIdParamSchema.parse(request.params);
     const parsed = createConsultationSchema.parse(request.body);
-    const consultation = await createConsultationService(doctorId, patientId, parsed);
+    const authUser = request.user || request.tokenPayload;
+    const consultation = await createConsultationService(doctorId, patientId, parsed, authUser);
     response.status(201).json(consultation);
 }
 
@@ -111,7 +112,8 @@ export async function createInvestigationOrder(request: Request, response: Respo
     const doctorId = await getDoctorId(request);
     const { patientId } = patientIdParamSchema.parse(request.params);
     const parsed = createInvestigationOrderSchema.parse(request.body);
-    const order = await createInvestigationOrderService(doctorId, patientId, parsed);
+    const authUser = request.user || request.tokenPayload;
+    const order = await createInvestigationOrderService(doctorId, patientId, parsed, authUser);
     response.status(201).json(order);
 }
 

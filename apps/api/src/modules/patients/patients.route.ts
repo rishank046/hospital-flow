@@ -15,13 +15,14 @@ import {
     updateMyProfile,
     updatePatientById,
 } from "#modules/patients/patients.controller.js";
+import { getCurrentPatientVisit } from "#modules/visits/visits.controller.js";
 import { authenticate, requireRole } from "#middleware/auth.middleware.js";
 import wrapper from "#utils/wrapper.js";
 
 const router = express.Router();
 
-router.get("/", authenticate, requireRole("USER"), wrapper(listMyPatients));
-router.post("/", authenticate, requireRole("USER"), wrapper(createPatient));
+router.get("/", authenticate, wrapper(listMyPatients));
+router.post("/", authenticate, wrapper(createPatient));
 router.get("/byId/:patientId", authenticate, wrapper(getPatientById));
 router.patch("/byId/:patientId", authenticate, requireRole("USER"), wrapper(updatePatientById));
 
@@ -55,6 +56,13 @@ router.get(
 	authenticate,
 	requireRole("PATIENT"),
 	wrapper(getMyQueueStatus),
+);
+
+router.get(
+	"/me/current-visit",
+	authenticate,
+	requireRole("PATIENT"),
+	wrapper(getCurrentPatientVisit),
 );
 
 router.get("/me/journey", authenticate, requireRole("PATIENT"), wrapper(getMyJourney));

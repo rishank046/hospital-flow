@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
-import { loginSchema , registerSchema} from "#modules/auth/auth.schema.js";
+import { loginSchema, registerSchema } from "#modules/auth/auth.schema.js";
 import { loginService, logoutService, registerService } from "#modules/auth/auth.service.js";
+import { AppError } from "#utils/errorHandler.js";
 const notImplemented = (_request: Request, response: Response) => {
 	response.status(501).json({ message: "Authentication endpoint not implemented" });
 };
@@ -22,10 +23,21 @@ async function login(request: Request, response: Response) {
 }
 
 async function register(request: Request, response: Response) {
-	const { name, email, password } = registerSchema.parse(request.body);
-	const result = await registerService(name, email, password);
-	await login(request, response);
+    if (request.body && typeof request.body === "object") {
+        const role = (request.body as Record<string, unknown>).role;
+        if (typeof role === "string") {
+            const normalized = role.toUpperCase();
+            if (normalized === "STAFF" || normalized === "ADMIN" || normalized === "DOCTOR") {
+                throw new AppError("Registration with role STAFF or ADMIN is not permitted", 400);
+            }
+        }
+    }
+
+    const { name, email, password, role } = registerSchema.parse(request.body);
+    await registerService(name, email, password, role);
+    await login(request, response);
 }
+
 
 async function logout(request: Request, response: Response) {
 	const authHeader = request.headers.authorization;

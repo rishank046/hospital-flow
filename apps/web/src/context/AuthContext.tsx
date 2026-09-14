@@ -46,7 +46,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       savedStaffRole === 'NURSE' ||
       savedStaffRole === 'RECEPTIONIST' ||
       savedStaffRole === 'LAB_STAFF' ||
-      savedStaffRole === 'PHARMACIST'
+      savedStaffRole === 'PHARMACIST' ||
+      savedStaffRole === 'LAB_TECH' ||
+      savedStaffRole === 'BILLING_CLERK'
     ) {
       return savedStaffRole;
     }
@@ -119,10 +121,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         email: userData?.email || '',
         name:
           userData?.name ||
-          (newRole === 'DOCTOR'
+          (newRole === 'DOCTOR' || (newRole === 'STAFF' && userData?.staffRole === 'DOCTOR')
             ? 'Doctor'
             : newRole === 'STAFF'
             ? 'Staff Member'
+            : newRole === 'ADMIN'
+            ? 'Administrator'
             : 'Patient'),
         role: newRole,
         staffRole: userData?.staffRole,

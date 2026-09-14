@@ -1,11 +1,13 @@
-export type SystemRole = "USER" | "STAFF" | "ADMIN";
+export type SystemRole = "PATIENT" | "STAFF" | "ADMIN" | "USER";
 
 export type StaffRole =
     | "DOCTOR"
     | "NURSE"
+    | "PHARMACIST"
+    | "LAB_TECH"
     | "RECEPTIONIST"
-    | "LAB_STAFF"
-    | "PHARMACIST";
+    | "BILLING_CLERK"
+    | "LAB_STAFF";
 
 export type StaffStatus = "ACTIVE" | "INACTIVE" | "ON_LEAVE";
 
@@ -13,5 +15,6 @@ export interface AuthPayload {
     userId: string;
     email: string;
     role: SystemRole;
-    staffRole?: StaffRole | undefined;
+    staffRole?: StaffRole | null | undefined;
 }
+

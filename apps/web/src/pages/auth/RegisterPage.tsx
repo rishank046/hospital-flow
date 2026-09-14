@@ -43,7 +43,7 @@ export function RegisterPage() {
         role: 'PATIENT',
       });
 
-      window.history.pushState({}, '', '/patient');
+      window.history.pushState({}, '', '/patient/dashboard');
       window.dispatchEvent(new PopStateEvent('popstate'));
     } catch (err) {
       setError(

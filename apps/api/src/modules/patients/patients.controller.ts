@@ -47,7 +47,17 @@ function getAuthContext(request: Request): { userId: string; email: string; isSt
 }
 
 export async function listMyPatients(request: Request, response: Response) {
-    const { userId } = getAuthContext(request);
+    const { userId, isStaff } = getAuthContext(request);
+    if (isStaff) {
+        const pool = (await import("#database/pool.js")).default;
+        const res = await pool.query(
+            `SELECT id, owner_user_id, name, age, gender, patient_type, created_at
+             FROM "Patient"
+             ORDER BY created_at DESC`
+        );
+        response.status(200).json({ patients: res.rows });
+        return;
+    }
     const result = await listMyPatientsService(userId);
     response.status(200).json(result);
 }
