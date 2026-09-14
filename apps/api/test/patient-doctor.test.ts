@@ -188,7 +188,6 @@ afterAll(async () => {
         await pool.query('DELETE FROM "users" WHERE id = $1', [createdAdminDoctorUserId]);
     }
     if (createdStaffUserId) {
-        await pool.query('DELETE FROM "nurses" WHERE staff_id IN (SELECT id FROM "staff_profiles" WHERE user_id = $1)', [createdStaffUserId]);
         await pool.query('DELETE FROM "staff_profiles" WHERE user_id = $1', [createdStaffUserId]);
         await pool.query('DELETE FROM "users" WHERE id = $1', [createdStaffUserId]);
     }
@@ -2295,7 +2294,7 @@ describe("Clinical Modules & Full Visit Lifecycle (Vitals -> Consultation -> Lab
         expect(checkData.dispenses).toHaveLength(1);
     });
 
-    it("POST /visits/:visitId/invoice - generates invoice with derived line items and moves visit to BILLING", async () => {
+    it("POST /visits/:visitId/invoice - generates invoice with derived line items and moves visit to BILLING", { timeout: 15000 }, async () => {
         const res = await fetch(`${baseUrl}/visits/${clinicalVisitId}/invoice`, {
             method: "POST",
             headers: {

@@ -2,7 +2,14 @@ import pool from "#database/pool.js";
 import { AppError } from "#utils/errorHandler.js";
 import type { AuthPayload } from "#types/auth.types.js";
 import { createVisitService } from "#modules/visits/visits.service.js";
-import type { CreateLabOrderInput, LabOrderFilterQuery, UpdateLabOrderInput } from "./lab-orders.schema.js";
+import { completeWorkflowTaskService } from "#modules/workflow/workflow.service.js";
+import type {
+    CreateLabOrderInput,
+    LabOrderFilterQuery,
+    RecordSampleCollectionInput,
+    UpdateLabOrderInput,
+    UploadLabReportInput,
+} from "./lab-orders.schema.js";
 
 export async function createLabOrderService(
     doctorId: string | null,
@@ -189,8 +196,8 @@ export async function updateLabOrderService(
     data: UpdateLabOrderInput,
     authUser?: AuthPayload
 ) {
-    const checkRes = await pool.query(
-        'SELECT id, status FROM "investigation_orders" WHERE id = $1',
+    const checkRes = await pool.query<{ id: string; status: string; visit_id: string }>(
+        'SELECT id, status, visit_id FROM "investigation_orders" WHERE id = $1',
         [orderId]
     );
 
@@ -212,19 +219,177 @@ export async function updateLabOrderService(
 
     const newStatus = data.status ?? "COMPLETED";
     const resultText = data.result ?? null;
+    const reportUrl = data.reportUrl || data.report_url || null;
+    const rawSampleTime = data.sampleCollectedAt || data.sample_collected_at;
+    const sampleTime = rawSampleTime ? new Date(rawSampleTime) : null;
+
+    const updates: string[] = [
+        "status = $1",
+        "result = COALESCE($2, result)",
+        "performed_by = COALESCE($3, performed_by)",
+        "report_url = COALESCE($4, report_url)",
+        "updated_at = CURRENT_TIMESTAMP",
+    ];
+    const params: unknown[] = [newStatus, resultText, performedByStaffId, reportUrl];
+
+    if (sampleTime) {
+        params.push(sampleTime);
+        updates.push(`sample_collected_at = $${params.length}`);
+    } else if (newStatus === "SAMPLE_COLLECTED") {
+        updates.push("sample_collected_at = COALESCE(sample_collected_at, CURRENT_TIMESTAMP)");
+    }
+
+    if (newStatus === "COMPLETED") {
+        updates.push("resulted_at = COALESCE(resulted_at, CURRENT_TIMESTAMP)");
+    }
+
+    params.push(orderId);
+    const whereParamIndex = params.length;
 
     const updateRes = await pool.query(
         `UPDATE "investigation_orders"
-         SET status = $1,
-             result = COALESCE($2, result),
-             performed_by = COALESCE($3, performed_by),
+         SET ${updates.join(", ")}
+         WHERE id = $${whereParamIndex}
+         RETURNING *`,
+        params
+    );
+
+    const updatedOrder = updateRes.rows[0];
+
+    // If order was completed, also complete any active LAB_TEST workflow task for this visit
+    if (newStatus === "COMPLETED" && checkRes.rows[0].visit_id) {
+        try {
+            const wfRes = await pool.query<{ id: string }>(
+                `SELECT id FROM "workflow_tasks"
+                 WHERE visit_id = $1 AND task_type = 'LAB_TEST' AND status NOT IN ('COMPLETED', 'CANCELLED', 'SKIPPED')
+                 LIMIT 1`,
+                [checkRes.rows[0].visit_id]
+            );
+            if (wfRes.rowCount && wfRes.rows[0]) {
+                await completeWorkflowTaskService(wfRes.rows[0].id, authUser);
+            }
+        } catch {
+            // Workflow unblock is best-effort alongside order completion
+        }
+    }
+
+    return updatedOrder;
+}
+
+export async function recordSampleCollectionService(
+    orderId: string,
+    data?: RecordSampleCollectionInput,
+    authUser?: AuthPayload
+) {
+    const checkRes = await pool.query<{ id: string; status: string; visit_id: string }>(
+        'SELECT id, status, visit_id FROM "investigation_orders" WHERE id = $1',
+        [orderId]
+    );
+
+    if (checkRes.rowCount === 0 || !checkRes.rows[0]) {
+        throw new AppError("Investigation order not found", 404);
+    }
+
+    let staffId: string | null = null;
+    if (authUser?.userId) {
+        const staffRes = await pool.query<{ id: string }>(
+            'SELECT id FROM "staff_profiles" WHERE user_id = $1 OR id = $1',
+            [authUser.userId]
+        );
+        if (staffRes.rowCount && staffRes.rows[0]) {
+            staffId = staffRes.rows[0].id;
+        }
+    }
+
+    const collectedAt = data?.collectedAt || data?.collected_at ? new Date(data?.collectedAt || data?.collected_at!) : new Date();
+
+    const updateRes = await pool.query(
+        `UPDATE "investigation_orders"
+         SET status = 'SAMPLE_COLLECTED',
+             sample_collected_at = $1,
+             performed_by = COALESCE($2, performed_by),
+             instructions = CASE
+                 WHEN $3::text IS NOT NULL THEN COALESCE(instructions || ' | Notes: ' || $3, $3)
+                 ELSE instructions
+             END,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = $4
          RETURNING *`,
-        [newStatus, resultText, performedByStaffId, orderId]
+        [collectedAt, staffId, data?.notes ?? null, orderId]
     );
 
-    return updateRes.rows[0];
+    return {
+        ...updateRes.rows[0],
+        message: "Sample collected successfully",
+    };
+}
+
+export async function uploadLabReportService(
+    orderId: string,
+    data: UploadLabReportInput,
+    authUser?: AuthPayload
+) {
+    const reportUrl = data.reportUrl || data.report_url;
+    if (!reportUrl) {
+        throw new AppError("reportUrl is required", 400);
+    }
+
+    const checkRes = await pool.query<{ id: string; status: string; visit_id: string }>(
+        'SELECT id, status, visit_id FROM "investigation_orders" WHERE id = $1',
+        [orderId]
+    );
+
+    if (checkRes.rowCount === 0 || !checkRes.rows[0]) {
+        throw new AppError("Investigation order not found", 404);
+    }
+
+    let staffId: string | null = null;
+    if (authUser?.userId) {
+        const staffRes = await pool.query<{ id: string }>(
+            'SELECT id FROM "staff_profiles" WHERE user_id = $1 OR id = $1',
+            [authUser.userId]
+        );
+        if (staffRes.rowCount && staffRes.rows[0]) {
+            staffId = staffRes.rows[0].id;
+        }
+    }
+
+    const resultText = data.result ?? (data.notes ? `Report uploaded: ${reportUrl} (${data.notes})` : `Report uploaded: ${reportUrl}`);
+
+    const updateRes = await pool.query(
+        `UPDATE "investigation_orders"
+         SET status = 'COMPLETED',
+             report_url = $1,
+             result = COALESCE($2, result),
+             performed_by = COALESCE($3, performed_by),
+             resulted_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $4
+         RETURNING *`,
+        [reportUrl, resultText, staffId, orderId]
+    );
+
+    // Unblock linked LAB_TEST workflow task
+    if (checkRes.rows[0].visit_id) {
+        try {
+            const wfRes = await pool.query<{ id: string }>(
+                `SELECT id FROM "workflow_tasks"
+                 WHERE visit_id = $1 AND task_type = 'LAB_TEST' AND status NOT IN ('COMPLETED', 'CANCELLED', 'SKIPPED')
+                 LIMIT 1`,
+                [checkRes.rows[0].visit_id]
+            );
+            if (wfRes.rowCount && wfRes.rows[0]) {
+                await completeWorkflowTaskService(wfRes.rows[0].id, authUser);
+            }
+        } catch {
+            // Best effort workflow unblock
+        }
+    }
+
+    return {
+        ...updateRes.rows[0],
+        message: "Lab report uploaded and marked completed successfully",
+    };
 }
 
 export async function getPatientReportsService(doctorIdOrPatientId: string, maybePatientId?: string) {

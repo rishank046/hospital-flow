@@ -26,9 +26,18 @@ function validateJwtSecret() {
 }
 
 // create tables at database at startup if they don't exist
-pool.query(schema).catch((error) => {
-  console.error("Database schema initialization error:", error);
-});
+pool.query(schema)
+  .then(async () => {
+    await pool.query(`
+      ALTER TYPE "user_role" ADD VALUE IF NOT EXISTS 'PATIENT';
+      ALTER TABLE "investigation_orders" ADD COLUMN IF NOT EXISTS report_url TEXT;
+      ALTER TABLE "investigation_orders" ADD COLUMN IF NOT EXISTS sample_collected_at TIMESTAMP;
+      ALTER TABLE "investigation_orders" ADD COLUMN IF NOT EXISTS resulted_at TIMESTAMP;
+    `).catch(() => {});
+  })
+  .catch((error) => {
+    console.error("Database schema initialization error:", error);
+  });
 
 validateJwtSecret();
 
