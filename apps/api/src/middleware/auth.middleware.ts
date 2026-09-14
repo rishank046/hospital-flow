@@ -43,9 +43,9 @@ export async function authenticate(
         );
 
         const payload = decodedToken as Record<string, unknown>;
-        const rawRole = String(payload["role"] ?? "PATIENT").toUpperCase();
+        const rawRole = String(payload["role"] ?? "USER").toUpperCase();
         
-        let role: SystemRole = "PATIENT";
+        let role: SystemRole = "USER";
         let staffRole: StaffRole | undefined = typeof payload["staffRole"] === "string" 
             ? (payload["staffRole"] as StaffRole) 
             : undefined;
@@ -58,7 +58,7 @@ export async function authenticate(
                 staffRole = "DOCTOR";
             }
         } else {
-            role = "PATIENT";
+            role = "USER";
         }
 
         const userId = String(payload["userId"] ?? payload["id"] ?? "");
@@ -138,8 +138,8 @@ export const requireStaffRole = (
 
     // Fallback: Look up Staff record for this User
     try {
-        const staffRes = await pool.query<{ role: StaffRole; status: string }>(
-            'SELECT role, status FROM "Staff" WHERE user_id = $1',
+        const staffRes = await pool.query<{ staff_role: StaffRole; status: string }>(
+            'SELECT staff_role, status FROM "staff_profiles" WHERE user_id = $1',
             [user.userId]
         );
 
@@ -150,26 +150,14 @@ export const requireStaffRole = (
                 return;
             }
 
-            if (allowedRoles.length > 0 && !allowedRoles.includes(staff.role)) {
+            if (allowedRoles.length > 0 && !allowedRoles.includes(staff.staff_role)) {
                 response.status(403).json({ message: "Forbidden: insufficient staff role" });
                 return;
             }
 
             // Cache on request.user
-            user.staffRole = staff.role;
+            user.staffRole = staff.staff_role;
             return next();
-        }
-
-        // Fallback for tests / legacy where Doctor was seeded directly
-        if (allowedRoles.includes("DOCTOR")) {
-            const docRes = await pool.query<{ id: string }>(
-                'SELECT id FROM "Doctor" WHERE id = $1',
-                [user.userId]
-            );
-            if (docRes.rowCount && docRes.rowCount > 0) {
-                user.staffRole = "DOCTOR";
-                return next();
-            }
         }
 
         response.status(403).json({ message: "Forbidden: staff profile not found" });

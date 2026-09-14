@@ -2,6 +2,7 @@ export type SystemRole = "PATIENT" | "STAFF" | "ADMIN" | "USER";
 
 export type StaffRole =
     | "DOCTOR"
+    | "OPD_MANAGER"
     | "NURSE"
     | "PHARMACIST"
     | "LAB_TECH"

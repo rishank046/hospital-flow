@@ -6,6 +6,7 @@ import wrapper from "#utils/wrapper.js";
 const route = express.Router();
 
 route.post("/login", wrapper(authController.login));
+route.get("/me", authenticate, wrapper(authController.me));
 route.post("/register", wrapper(authController.register));
 route.post("/logout", authenticate, wrapper(authController.logout));
 route.post("/refresh", wrapper(authController.refresh));

@@ -10,8 +10,8 @@ export async function createLabOrderService(
     data: CreateLabOrderInput,
     authUser?: AuthPayload
 ) {
-    const patientRes = await pool.query<{ id: string; owner_user_id: string }>(
-        'SELECT id, owner_user_id FROM "Patient" WHERE id = $1',
+    const patientRes = await pool.query<{ id: string; user_id: string }>(
+        'SELECT id, owner_user_id as user_id FROM "patient_profiles" WHERE id = $1',
         [patientId]
     );
     if (patientRes.rowCount === 0 || !patientRes.rows[0]) {
@@ -34,10 +34,10 @@ export async function createLabOrderService(
     }
 
     if (!visitId) {
-        let validUserId = patientRes.rows[0].owner_user_id;
+        let validUserId = patientRes.rows[0].user_id;
         if (authUser?.userId) {
             const userCheck = await pool.query<{ id: string }>(
-                'SELECT id FROM "User" WHERE id = $1',
+                'SELECT id FROM "users" WHERE id = $1',
                 [authUser.userId]
             );
             if (userCheck.rowCount) {
@@ -45,47 +45,67 @@ export async function createLabOrderService(
             }
         }
 
+        // The authenticated staff member is creating the visit on behalf of
+        // the patient (clinical workflow), so act as STAFF to bypass the
+        // patient-ownership check in createVisitService.
         const callerAuth: AuthPayload = {
-            userId: validUserId,
+            userId: authUser?.userId || validUserId || "system",
             email: authUser?.email || "system@hospital.internal",
-            role: "PATIENT",
+            role: "STAFF",
         };
 
         const createdVisit = await createVisitService(
             {
                 patientId,
-                visitType: "OPD",
+                visitType: "WALKIN",
                 assignedDoctorId: resolvedDoctorId,
                 departmentId: null,
                 appointmentId: null,
-                registeredBy: validUserId,
+                registeredBy: authUser?.userId ?? null,
             },
             callerAuth
         );
         visitId = createdVisit.id;
     }
 
+    // investigation_orders.doctor_id is NOT NULL in the schema. When the
+    // order is created by non-doctor staff (e.g. a nurse), fall back to the
+    // visit's assigned doctor so the FK constraint is always satisfied.
+    let orderDoctorId = resolvedDoctorId;
+    if (!orderDoctorId) {
+        const visitDocRes = await pool.query<{ assigned_doctor_id: string | null }>(
+            'SELECT assigned_doctor_id FROM "visits" WHERE id = $1',
+            [visitId]
+        );
+        orderDoctorId = visitDocRes.rows[0]?.assigned_doctor_id ?? null;
+    }
+    if (!orderDoctorId) {
+        throw new AppError("A doctor is required to create an investigation order", 400);
+    }
+
     const orderRes = await pool.query(
-        `INSERT INTO "InvestigationOrder" (
-            patient_id,
+        `INSERT INTO "investigation_orders" (
             doctor_id,
             visit_id,
             test_name,
             instructions,
             status
          )
-         VALUES ($1, $2, $3, $4, $5, 'PENDING')
+         VALUES ($1, $2, $3, $4, 'PENDING')
          RETURNING *`,
         [
-            patientId,
-            resolvedDoctorId,
+            orderDoctorId,
             visitId,
             testName,
             data.instructions ?? null,
         ]
     );
 
-    return orderRes.rows[0];
+    return {
+        ...orderRes.rows[0],
+        patient_id: patientId,
+        patientId,
+    };
 }
 
 export async function getLabOrdersService(filter: LabOrderFilterQuery) {
@@ -94,7 +114,7 @@ export async function getLabOrdersService(filter: LabOrderFilterQuery) {
 
     if (filter.patientId) {
         params.push(filter.patientId);
-        conditions.push(`io.patient_id = $${params.length}`);
+        conditions.push(`v.patient_id = $${params.length}`);
     }
 
     if (filter.visitId) {
@@ -117,15 +137,18 @@ export async function getLabOrdersService(filter: LabOrderFilterQuery) {
     const query = `
         SELECT 
             io.*,
+            v.patient_id,
             p.name as patient_name,
-            COALESCE(u.name, d.name) as doctor_name,
-            tech.name as performed_by_name
-        FROM "InvestigationOrder" io
-        JOIN "Patient" p ON io.patient_id = p.id
-        LEFT JOIN "Doctor" d ON io.doctor_id = d.id
-        LEFT JOIN "Staff" s ON d.staff_id = s.id
-        LEFT JOIN "User" u ON s.user_id = u.id
-        LEFT JOIN "User" tech ON io.performed_by = tech.id
+            u.name as doctor_name,
+            tech_u.name as performed_by_name
+        FROM "investigation_orders" io
+        JOIN "visits" v ON io.visit_id = v.id
+        JOIN "patient_profiles" p ON v.patient_id = p.id
+        LEFT JOIN "doctors" d ON io.doctor_id = d.id
+        LEFT JOIN "staff_profiles" s ON d.staff_id = s.id
+        LEFT JOIN "users" u ON s.user_id = u.id
+        LEFT JOIN "staff_profiles" tech ON io.performed_by = tech.id
+        LEFT JOIN "users" tech_u ON tech.user_id = tech_u.id
         ${whereClause}
         ORDER BY io.created_at DESC
     `;
@@ -138,15 +161,18 @@ export async function getLabOrderByIdService(id: string) {
     const res = await pool.query(
         `SELECT 
             io.*,
+            v.patient_id,
             p.name as patient_name,
-            COALESCE(u.name, d.name) as doctor_name,
-            tech.name as performed_by_name
-         FROM "InvestigationOrder" io
-         JOIN "Patient" p ON io.patient_id = p.id
-         LEFT JOIN "Doctor" d ON io.doctor_id = d.id
-         LEFT JOIN "Staff" s ON d.staff_id = s.id
-         LEFT JOIN "User" u ON s.user_id = u.id
-         LEFT JOIN "User" tech ON io.performed_by = tech.id
+            u.name as doctor_name,
+            tech_u.name as performed_by_name
+         FROM "investigation_orders" io
+         JOIN "visits" v ON io.visit_id = v.id
+         JOIN "patient_profiles" p ON v.patient_id = p.id
+         LEFT JOIN "doctors" d ON io.doctor_id = d.id
+         LEFT JOIN "staff_profiles" s ON d.staff_id = s.id
+         LEFT JOIN "users" u ON s.user_id = u.id
+         LEFT JOIN "staff_profiles" tech ON io.performed_by = tech.id
+         LEFT JOIN "users" tech_u ON tech.user_id = tech_u.id
          WHERE io.id = $1`,
         [id]
     );
@@ -159,74 +185,70 @@ export async function getLabOrderByIdService(id: string) {
 }
 
 export async function updateLabOrderService(
-    id: string,
+    orderId: string,
     data: UpdateLabOrderInput,
     authUser?: AuthPayload
 ) {
     const checkRes = await pool.query(
-        'SELECT * FROM "InvestigationOrder" WHERE id = $1',
-        [id]
+        'SELECT id, status FROM "investigation_orders" WHERE id = $1',
+        [orderId]
     );
 
     if (checkRes.rowCount === 0 || !checkRes.rows[0]) {
         throw new AppError("Investigation order not found", 404);
     }
 
-    const existing = checkRes.rows[0];
-    const newStatus = data.status ?? existing.status;
-    const newResult = data.result !== undefined ? data.result : existing.result;
-    const newInstructions = data.instructions !== undefined ? data.instructions : existing.instructions;
-    let performedBy = authUser?.userId ?? existing.performed_by;
+    let performedByStaffId: string | null = null;
+    const performedBy = data.performedBy || data.performed_by || authUser?.userId;
     if (performedBy) {
-        const uCheck = await pool.query('SELECT id FROM "User" WHERE id = $1', [performedBy]);
-        if (uCheck.rowCount === 0) {
-            performedBy = null;
+        const staffLookup = await pool.query<{ id: string }>(
+            'SELECT id FROM "staff_profiles" WHERE user_id = $1 OR id = $1',
+            [performedBy]
+        );
+        if (staffLookup.rowCount && staffLookup.rows[0]) {
+            performedByStaffId = staffLookup.rows[0].id;
         }
     }
 
+    const newStatus = data.status ?? "COMPLETED";
+    const resultText = data.result ?? null;
+
     const updateRes = await pool.query(
-        `UPDATE "InvestigationOrder"
+        `UPDATE "investigation_orders"
          SET status = $1,
-             result = $2,
-             instructions = $3,
-             performed_by = $4,
+             result = COALESCE($2, result),
+             performed_by = COALESCE($3, performed_by),
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = $5
+         WHERE id = $4
          RETURNING *`,
-        [newStatus, newResult, newInstructions, performedBy, id]
+        [newStatus, resultText, performedByStaffId, orderId]
     );
 
     return updateRes.rows[0];
 }
 
-export async function getPatientReportsService(doctorId: string, patientId: string) {
-    const patientRes = await pool.query('SELECT id FROM "Patient" WHERE id = $1', [patientId]);
-    if (patientRes.rowCount === 0) {
-        throw new AppError("Patient not found", 404);
-    }
-
-    const reportsRes = await pool.query(
+export async function getPatientReportsService(doctorIdOrPatientId: string, maybePatientId?: string) {
+    const patientId = maybePatientId ?? doctorIdOrPatientId;
+    const res = await pool.query(
         `SELECT 
-            r.id,
-            r.visit_id,
-            r.test_name,
-            r.instructions,
-            r.status,
-            r.result,
-            r.created_at,
-            r.updated_at,
-            d.id as doctor_id,
-            COALESCE(u.name, d.name) as doctor_name
-         FROM "InvestigationOrder" r
-         LEFT JOIN "Doctor" d ON r.doctor_id = d.id
-         LEFT JOIN "Staff" s ON d.staff_id = s.id
-         LEFT JOIN "User" u ON s.user_id = u.id
-         WHERE r.patient_id = $1
-         ORDER BY r.created_at DESC`,
+            io.*,
+            v.patient_id,
+            p.name as patient_name,
+            u.name as doctor_name,
+            tech_u.name as performed_by_name
+         FROM "investigation_orders" io
+         JOIN "visits" v ON io.visit_id = v.id
+         JOIN "patient_profiles" p ON v.patient_id = p.id
+         LEFT JOIN "doctors" d ON io.doctor_id = d.id
+         LEFT JOIN "staff_profiles" s ON d.staff_id = s.id
+         LEFT JOIN "users" u ON s.user_id = u.id
+         LEFT JOIN "staff_profiles" tech ON io.performed_by = tech.id
+         LEFT JOIN "users" tech_u ON tech.user_id = tech_u.id
+         WHERE v.patient_id = $1
+         ORDER BY io.created_at DESC`,
         [patientId]
     );
-
-    return { reports: reportsRes.rows };
+    return { reports: res.rows };
 }
 
 export { createLabOrderService as createInvestigationOrderService };

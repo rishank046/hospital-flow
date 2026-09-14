@@ -55,7 +55,7 @@ describe("Visit Status Transitions - Validator & Endpoint Enforcement", { timeou
 
         // Seed Staff
         const staffUserRes = await pool.query(
-            `INSERT INTO "User" (name, email, password, role)
+            `INSERT INTO "users" (name, email, password, role)
              VALUES ($1, $2, $3, 'STAFF')
              RETURNING id`,
             ["Transition Staff", staffEmail, hashedPassword]
@@ -63,7 +63,7 @@ describe("Visit Status Transitions - Validator & Endpoint Enforcement", { timeou
         staffUserId = staffUserRes.rows[0].id;
 
         const staffRes = await pool.query(
-            `INSERT INTO "Staff" (user_id, employee_code, role, status)
+            `INSERT INTO "staff_profiles" (user_id, employee_code, staff_role, status)
              VALUES ($1, $2, 'RECEPTIONIST', 'ACTIVE')
              RETURNING id`,
             [staffUserId, `EMP-TR-${testTag}`]
@@ -78,9 +78,9 @@ describe("Visit Status Transitions - Validator & Endpoint Enforcement", { timeou
 
         // Seed Patient
         const patRes = await pool.query(
-            `INSERT INTO "Patient" (name, age, gender, patient_type)
-             VALUES ('Transition Patient', 35, 'Other', 'Walkin')
-             RETURNING id`,
+            `INSERT INTO "patient_profiles" (name, date_of_birth, gender)
+             VALUES ('Transition Patient', '1989-01-01', 'Other')
+             RETURNING id`
         );
         patientId = patRes.rows[0].id;
     });
@@ -90,13 +90,13 @@ describe("Visit Status Transitions - Validator & Endpoint Enforcement", { timeou
             await pool.query('DELETE FROM "visits" WHERE id = ANY($1)', [createdVisitIds]);
         }
         if (patientId) {
-            await pool.query('DELETE FROM "Patient" WHERE id = $1', [patientId]);
+            await pool.query('DELETE FROM "patient_profiles" WHERE id = $1', [patientId]);
         }
         if (staffId) {
-            await pool.query('DELETE FROM "Staff" WHERE id = $1', [staffId]);
+            await pool.query('DELETE FROM "staff_profiles" WHERE id = $1', [staffId]);
         }
         if (staffUserId) {
-            await pool.query('DELETE FROM "User" WHERE id = $1', [staffUserId]);
+            await pool.query('DELETE FROM "users" WHERE id = $1', [staffUserId]);
         }
 
         if (server) {

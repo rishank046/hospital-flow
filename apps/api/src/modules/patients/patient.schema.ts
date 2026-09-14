@@ -2,15 +2,27 @@ import { z } from "zod";
 
 export const createPatientProfileSchema = z.object({
     name: z.string().min(1),
-    age: z.number().int().nonnegative(),
+    age: z.number().int().nonnegative().optional(),
+    dateOfBirth: z.string().optional(),
+    date_of_birth: z.string().optional(),
     gender: z.enum(["Male", "Female", "Other"]),
+    phone: z.string().optional().nullable(),
+    mobileNumber: z.string().optional().nullable(),
+    mobile_number: z.string().optional().nullable(),
+    address: z.string().optional().nullable(),
     patientType: z.enum(["Online", "Walkin"]).optional().default("Online"),
 });
 
 export const updatePatientProfileSchema = z.object({
     name: z.string().min(1).optional(),
     age: z.number().int().nonnegative().optional(),
+    dateOfBirth: z.string().optional(),
+    date_of_birth: z.string().optional(),
     gender: z.enum(["Male", "Female", "Other"]).optional(),
+    phone: z.string().optional().nullable(),
+    mobileNumber: z.string().optional().nullable(),
+    mobile_number: z.string().optional().nullable(),
+    address: z.string().optional().nullable(),
     patientType: z.enum(["Online", "Walkin"]).optional(),
     doctorId: z.string().uuid().optional(),
 });
@@ -24,7 +36,7 @@ export const bookAppointmentSchema = z.object({
     doctorId: z.string().uuid(),
     startTime: z.string().datetime(),
     endTime: z.string().datetime(),
-    type: z.enum(["CONSULTATION", "FOLLOW_UP", "EMERGENCY", "ROUTINE"]).optional().default("CONSULTATION"),
+    type: z.enum(["CONSULTATION", "FOLLOW_UP", "PROCEDURE", "EMERGENCY", "ROUTINE"]).optional().default("CONSULTATION"),
 });
 
 export const appointmentIdParamSchema = z.object({

@@ -33,7 +33,8 @@ export function ProtectedRoute({ children, allowedRoles, allowedStaffRoles }: Pr
     return <div className="loading-screen">Loading session...</div>;
   }
 
-  const isDoctor = role === 'DOCTOR' || (role === 'STAFF' && staffRole === 'DOCTOR');
+  const isDoctor = (role === 'STAFF' && staffRole === 'DOCTOR') || role === 'DOCTOR';
+  const isPatientOrUser = role === 'USER' || role === 'PATIENT';
 
   let hasAccess = true;
 
@@ -42,9 +43,9 @@ export function ProtectedRoute({ children, allowedRoles, allowedStaffRoles }: Pr
       hasAccess = false;
     } else if (allowedRoles.includes(role)) {
       hasAccess = true;
-    } else if (isDoctor && allowedRoles.includes('DOCTOR')) {
+    } else if (isPatientOrUser && (allowedRoles.includes('USER') || allowedRoles.includes('PATIENT'))) {
       hasAccess = true;
-    } else if (isDoctor && allowedRoles.includes('STAFF')) {
+    } else if (isDoctor && (allowedRoles.includes('DOCTOR') || allowedRoles.includes('STAFF'))) {
       hasAccess = true;
     } else {
       hasAccess = false;
@@ -58,13 +59,46 @@ export function ProtectedRoute({ children, allowedRoles, allowedStaffRoles }: Pr
   }
 
   if (!hasAccess) {
-    const displayRole = staffRole ? `${role} (${staffRole})` : (role ?? 'UNKNOWN');
+    const displayRole = staffRole ? `${role} • ${staffRole}` : (role ?? 'UNKNOWN');
+    const returnPath = role === 'ADMIN'
+      ? '/admin'
+      : role === 'USER' || role === 'PATIENT'
+      ? '/user'
+      : staffRole === 'DOCTOR'
+      ? '/staff/doctor'
+      : staffRole === 'OPD_MANAGER' || staffRole === 'RECEPTIONIST'
+      ? '/staff/opd'
+      : staffRole === 'LAB_TECH' || staffRole === 'LAB_STAFF'
+      ? '/staff/lab'
+      : staffRole === 'PHARMACIST'
+      ? '/staff/pharmacy'
+      : staffRole === 'BILLING_CLERK'
+      ? '/staff/billing'
+      : staffRole === 'NURSE'
+      ? '/staff/nurse'
+      : '/login';
+
+    const handleReturn = () => {
+      window.history.pushState({}, '', returnPath);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    };
+
     return (
-      <div className="forbidden-notice">
-        <h2>Access Forbidden (403)</h2>
-        <p>
-          Your account ({displayRole}) does not have permission to view this page.
+      <div className="forbidden-notice" style={{ padding: '3rem 1.5rem', textAlign: 'center', maxWidth: '540px', margin: '4rem auto' }}>
+        <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.75rem', color: '#dc2626' }}>
+          Access Forbidden (403)
+        </h2>
+        <p style={{ color: '#4b5563', marginBottom: '1.5rem', lineHeight: 1.6 }}>
+          Your authenticated account (<strong>{displayRole}</strong>) does not have authorization to view this area.
         </p>
+        <button
+          type="button"
+          onClick={handleReturn}
+          className="submit-button"
+          style={{ maxWidth: '280px', margin: '0 auto' }}
+        >
+          Return to My Workspace
+        </button>
       </div>
     );
   }

@@ -1,8 +1,26 @@
-export type StaffRole = 'DOCTOR' | 'NURSE' | 'RECEPTIONIST' | 'LAB_STAFF' | 'PHARMACIST' | 'LAB_TECH' | 'BILLING_CLERK';
+export type AccountRole = 'USER' | 'STAFF' | 'ADMIN';
+export type UserRole = AccountRole | 'PATIENT' | 'DOCTOR';
+
+export type StaffRole =
+  | 'DOCTOR'
+  | 'OPD_MANAGER'
+  | 'NURSE'
+  | 'LAB_TECH'
+  | 'PHARMACIST'
+  | 'RECEPTIONIST'
+  | 'BILLING_CLERK'
+  | 'LAB_STAFF';
+
 export type StaffStatus = 'ACTIVE' | 'INACTIVE' | 'ON_LEAVE';
-export type UserRole = 'PATIENT' | 'DOCTOR' | 'STAFF' | 'ADMIN';
-export type AccountType = 'patient' | 'doctor' | 'staff';
-export type AuthMode = 'login' | 'register';
+
+export interface StaffInfo {
+  id: string;
+  staffRole: StaffRole;
+  role?: StaffRole;
+  employeeCode?: string;
+  status?: StaffStatus;
+  department?: string;
+}
 
 export interface AuthUser {
   id: string;
@@ -26,32 +44,29 @@ export interface RegisterPayload {
   password: string;
 }
 
-export interface DoctorLoginCredentials {
-  email: string;
-  password: string;
-}
-
 export interface AuthTokenResponse {
-  token: string;
-  user?: {
-    id?: string;
-    name?: string;
-    email?: string;
-    role?: string;
-    staffRole?: StaffRole;
+  success?: boolean;
+  message?: string;
+  data?: {
+    token: string;
+    user: AuthUser;
+    staff: StaffInfo | null;
+    doctor?: {
+      id: string;
+      name?: string;
+      email?: string;
+      specialization?: string;
+      department?: string;
+    } | null;
   };
-  staff?: {
-    id: string;
-    employeeCode: string;
-    role: StaffRole;
-    status: StaffStatus;
-  };
+  token?: string;
+  user?: AuthUser;
+  staff?: StaffInfo | null;
   doctor?: {
     id: string;
-    name: string;
-    email: string;
+    name?: string;
+    email?: string;
     specialization?: string;
     department?: string;
-  };
-  message?: string;
+  } | null;
 }

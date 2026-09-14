@@ -16,6 +16,7 @@ export const doctorSpecializationEnum = z.enum([
     "Urology",
     "Oncology",
     "Orthopedics",
+    "General Medicine",
 ]);
 
 export const staffRolesEnum = z.enum([
@@ -67,6 +68,7 @@ export const updateStaffSchema = z.object({
     status: staffStatusEnum.optional(),
     departmentId: z.string().uuid().optional(),
     department: z.string().optional(),
+    specialization: doctorSpecializationEnum.optional(),
 });
 
 export const staffIdParamSchema = z.object({
@@ -75,7 +77,7 @@ export const staffIdParamSchema = z.object({
 
 export type AdminLoginInput = z.infer<typeof adminLoginSchema>;
 export type CreateDoctorInput = z.infer<typeof createDoctorSchema>;
+export type CreateDoctorAdminInput = CreateDoctorInput;
 export type CreateStaffInput = z.infer<typeof createStaffSchema>;
 export type UpdateStaffStatusInput = z.infer<typeof updateStaffStatusSchema>;
 export type UpdateStaffInput = z.infer<typeof updateStaffSchema>;
-

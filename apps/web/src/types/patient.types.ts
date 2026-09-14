@@ -4,16 +4,31 @@ export type Gender = 'Male' | 'Female' | 'Other';
 export interface PatientProfile {
   id: string;
   owner_user_id?: string;
+  user_id?: string;
   name: string;
   email?: string;
   age: number;
   gender: Gender;
   patientType?: PatientType;
   patient_type?: PatientType;
+  mobileNumber?: string;
+  mobile_number?: string;
+  phone?: string;
+  address?: string;
   doctorId?: string | null;
   doctor_id?: string | null;
   createdAt?: string;
   created_at?: string;
+}
+
+export interface CreatePatientProfilePayload {
+  name: string;
+  age?: number;
+  dateOfBirth?: string;
+  gender: Gender;
+  mobileNumber?: string;
+  phone?: string;
+  address?: string;
 }
 
 export interface Appointment {

@@ -10,8 +10,8 @@ export async function createConsultationService(
     data: CreateConsultationInput,
     authUser?: AuthPayload
 ) {
-    const patientRes = await pool.query<{ id: string; owner_user_id: string }>(
-        'SELECT id, owner_user_id FROM "Patient" WHERE id = $1',
+    const patientRes = await pool.query<{ id: string; user_id: string }>(
+        'SELECT id, owner_user_id as user_id FROM "patient_profiles" WHERE id = $1',
         [patientId]
     );
     if (patientRes.rowCount === 0 || !patientRes.rows[0]) {
@@ -45,10 +45,10 @@ export async function createConsultationService(
 
     // 3. If no active visit exists, create one
     if (!visitId) {
-        let validUserId = patientRes.rows[0].owner_user_id;
+        let validUserId = patientRes.rows[0].user_id;
         if (authUser?.userId) {
             const userCheck = await pool.query<{ id: string }>(
-                'SELECT id FROM "User" WHERE id = $1',
+                'SELECT id FROM "users" WHERE id = $1',
                 [authUser.userId]
             );
             if (userCheck.rowCount) {
@@ -56,10 +56,13 @@ export async function createConsultationService(
             }
         }
 
+        // The authenticated doctor is creating the visit on behalf of the
+        // patient (clinical workflow), so act as STAFF to bypass the
+        // patient-ownership check in createVisitService.
         const callerAuth: AuthPayload = {
-            userId: validUserId,
+            userId: authUser?.userId || validUserId || "system",
             email: authUser?.email || "system@hospital.internal",
-            role: "PATIENT",
+            role: "STAFF",
         };
 
         const createdVisit = await createVisitService(
@@ -79,20 +82,18 @@ export async function createConsultationService(
     const treatmentPlan = data.treatmentPlan || data.treatment_plan || null;
 
     const consultRes = await pool.query(
-        `INSERT INTO "Consultation" (
+        `INSERT INTO "consultations" (
             doctor_id,
-            patient_id,
             appointment_id,
             visit_id,
             diagnosis,
             notes,
             treatment_plan
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *`,
         [
             doctorId,
-            patientId,
             appointmentId,
             visitId,
             data.diagnosis,
@@ -107,9 +108,8 @@ export async function createConsultationService(
     if (data.prescriptions && data.prescriptions.length > 0) {
         for (const item of data.prescriptions) {
             const presRes = await pool.query(
-                `INSERT INTO "Prescription" (
+                `INSERT INTO "prescriptions" (
                     consultation_id,
-                    patient_id,
                     doctor_id,
                     visit_id,
                     medication,
@@ -119,11 +119,10 @@ export async function createConsultationService(
                     instructions,
                     status
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PENDING')
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'PENDING')
                  RETURNING *`,
                 [
                     consultation.id,
-                    patientId,
                     doctorId,
                     visitId,
                     item.medication,
@@ -133,12 +132,18 @@ export async function createConsultationService(
                     item.instructions ?? null,
                 ]
             );
-            createdPrescriptions.push(presRes.rows[0]);
+            createdPrescriptions.push({
+                ...presRes.rows[0],
+                patient_id: patientId,
+                patientId,
+            });
         }
     }
 
     return {
         ...consultation,
+        patient_id: patientId,
+        patientId,
         prescriptions: createdPrescriptions,
     };
 }
@@ -149,7 +154,7 @@ export async function updateConsultationService(
     data: UpdateConsultationInput
 ) {
     const consultRes = await pool.query(
-        'SELECT id, doctor_id, diagnosis, notes, treatment_plan, visit_id FROM "Consultation" WHERE id = $1',
+        'SELECT id, doctor_id, diagnosis, notes, treatment_plan, visit_id FROM "consultations" WHERE id = $1',
         [consultationId]
     );
 
@@ -165,7 +170,7 @@ export async function updateConsultationService(
     const treatmentPlan = data.treatmentPlan || data.treatment_plan || existing.treatment_plan;
 
     const updateRes = await pool.query(
-        `UPDATE "Consultation"
+        `UPDATE "consultations"
          SET diagnosis = $1,
              notes = $2,
              treatment_plan = $3,
@@ -185,12 +190,17 @@ export async function updateConsultationService(
 
 export async function getConsultationByIdService(consultationId: string) {
     const res = await pool.query(
-        `SELECT c.*, p.name as patient_name, COALESCE(u.name, d.name) as doctor_name
-         FROM "Consultation" c
-         JOIN "Patient" p ON c.patient_id = p.id
-         LEFT JOIN "Doctor" d ON c.doctor_id = d.id
-         LEFT JOIN "Staff" s ON d.staff_id = s.id
-         LEFT JOIN "User" u ON s.user_id = u.id
+        `SELECT 
+            c.*, 
+            v.patient_id,
+            p.name as patient_name, 
+            u.name as doctor_name
+         FROM "consultations" c
+         JOIN "visits" v ON c.visit_id = v.id
+         JOIN "patient_profiles" p ON v.patient_id = p.id
+         LEFT JOIN "doctors" d ON c.doctor_id = d.id
+         LEFT JOIN "staff_profiles" s ON d.staff_id = s.id
+         LEFT JOIN "users" u ON s.user_id = u.id
          WHERE c.id = $1`,
         [consultationId]
     );
@@ -200,7 +210,7 @@ export async function getConsultationByIdService(consultationId: string) {
     }
 
     const presRes = await pool.query(
-        'SELECT * FROM "Prescription" WHERE consultation_id = $1 ORDER BY created_at ASC',
+        'SELECT * FROM "prescriptions" WHERE consultation_id = $1 ORDER BY created_at ASC',
         [consultationId]
     );
 
@@ -212,11 +222,13 @@ export async function getConsultationByIdService(consultationId: string) {
 
 export async function getConsultationsByVisitService(visitId: string) {
     const res = await pool.query(
-        `SELECT c.*, COALESCE(u.name, d.name) as doctor_name
-         FROM "Consultation" c
-         LEFT JOIN "Doctor" d ON c.doctor_id = d.id
-         LEFT JOIN "Staff" s ON d.staff_id = s.id
-         LEFT JOIN "User" u ON s.user_id = u.id
+        `SELECT 
+            c.*, 
+            u.name as doctor_name
+         FROM "consultations" c
+         LEFT JOIN "doctors" d ON c.doctor_id = d.id
+         LEFT JOIN "staff_profiles" s ON d.staff_id = s.id
+         LEFT JOIN "users" u ON s.user_id = u.id
          WHERE c.visit_id = $1
          ORDER BY c.created_at ASC`,
         [visitId]

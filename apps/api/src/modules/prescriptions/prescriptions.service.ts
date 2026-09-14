@@ -9,7 +9,7 @@ export async function dispensePrescriptionService(
     authUser?: AuthPayload
 ) {
     const prescRes = await pool.query(
-        'SELECT * FROM "Prescription" WHERE id = $1',
+        'SELECT * FROM "prescriptions" WHERE id = $1',
         [prescriptionId]
     );
 
@@ -17,27 +17,28 @@ export async function dispensePrescriptionService(
         throw new AppError("Prescription not found", 404);
     }
 
-    const prescription = prescRes.rows[0];
-
-    const quantity = data.quantity ?? 1;
-    let dispensedBy = authUser?.userId ?? null;
-    if (dispensedBy) {
-        const uCheck = await pool.query('SELECT id FROM "User" WHERE id = $1', [dispensedBy]);
-        if (uCheck.rowCount === 0) {
-            dispensedBy = null;
+    const quantity = String(data.quantity ?? 1);
+    let dispensedByStaffId: string | null = null;
+    if (authUser?.userId) {
+        const staffLookup = await pool.query<{ id: string }>(
+            'SELECT id FROM "staff_profiles" WHERE user_id = $1 OR id = $1',
+            [authUser.userId]
+        );
+        if (staffLookup.rowCount && staffLookup.rows[0]) {
+            dispensedByStaffId = staffLookup.rows[0].id;
         }
     }
 
     const dispenseRes = await pool.query(
-        `INSERT INTO "pharmacy_dispenses" (prescription_id, dispensed_by, dispensed_quantity, notes)
+        `INSERT INTO "pharmacy_dispenses" (prescription_id, dispensed_by, quantity, notes)
          VALUES ($1, $2, $3, $4)
          RETURNING *`,
-        [prescriptionId, dispensedBy, quantity, data.notes ?? null]
+        [prescriptionId, dispensedByStaffId, quantity, data.notes ?? null]
     );
 
     const updateRes = await pool.query(
-        `UPDATE "Prescription"
-         SET status = 'DISPENSED'
+        `UPDATE "prescriptions"
+         SET status = 'DISPENSED', updated_at = CURRENT_TIMESTAMP
          WHERE id = $1
          RETURNING *`,
         [prescriptionId]
@@ -45,7 +46,10 @@ export async function dispensePrescriptionService(
 
     return {
         prescription: updateRes.rows[0],
-        dispense: dispenseRes.rows[0],
+        dispense: {
+            ...dispenseRes.rows[0],
+            dispensed_quantity: Number(dispenseRes.rows[0].quantity) || 1,
+        },
     };
 }
 
@@ -55,7 +59,7 @@ export async function getPrescriptionsService(filter: PrescriptionFilterQuery) {
 
     if (filter.patientId) {
         params.push(filter.patientId);
-        conditions.push(`pr.patient_id = $${params.length}`);
+        conditions.push(`v.patient_id = $${params.length}`);
     }
 
     if (filter.visitId) {
@@ -73,13 +77,15 @@ export async function getPrescriptionsService(filter: PrescriptionFilterQuery) {
     const query = `
         SELECT 
             pr.*,
+            v.patient_id,
             p.name as patient_name,
-            COALESCE(u.name, d.name) as doctor_name
-        FROM "Prescription" pr
-        JOIN "Patient" p ON pr.patient_id = p.id
-        LEFT JOIN "Doctor" d ON pr.doctor_id = d.id
-        LEFT JOIN "Staff" s ON d.staff_id = s.id
-        LEFT JOIN "User" u ON s.user_id = u.id
+            u.name as doctor_name
+        FROM "prescriptions" pr
+        JOIN "visits" v ON pr.visit_id = v.id
+        JOIN "patient_profiles" p ON v.patient_id = p.id
+        LEFT JOIN "doctors" d ON pr.doctor_id = d.id
+        LEFT JOIN "staff_profiles" s ON d.staff_id = s.id
+        LEFT JOIN "users" u ON s.user_id = u.id
         ${whereClause}
         ORDER BY pr.created_at DESC
     `;
@@ -92,13 +98,15 @@ export async function getPrescriptionByIdService(id: string) {
     const prescRes = await pool.query(
         `SELECT 
             pr.*,
+            v.patient_id,
             p.name as patient_name,
-            COALESCE(u.name, d.name) as doctor_name
-         FROM "Prescription" pr
-         JOIN "Patient" p ON pr.patient_id = p.id
-         LEFT JOIN "Doctor" d ON pr.doctor_id = d.id
-         LEFT JOIN "Staff" s ON d.staff_id = s.id
-         LEFT JOIN "User" u ON s.user_id = u.id
+            u.name as doctor_name
+         FROM "prescriptions" pr
+         JOIN "visits" v ON pr.visit_id = v.id
+         JOIN "patient_profiles" p ON v.patient_id = p.id
+         LEFT JOIN "doctors" d ON pr.doctor_id = d.id
+         LEFT JOIN "staff_profiles" s ON d.staff_id = s.id
+         LEFT JOIN "users" u ON s.user_id = u.id
          WHERE pr.id = $1`,
         [id]
     );
@@ -110,14 +118,19 @@ export async function getPrescriptionByIdService(id: string) {
     const dispensesRes = await pool.query(
         `SELECT pd.*, u.name as dispensed_by_name
          FROM "pharmacy_dispenses" pd
-         LEFT JOIN "User" u ON pd.dispensed_by = u.id
+         LEFT JOIN "staff_profiles" sp ON pd.dispensed_by = sp.id
+         LEFT JOIN "users" u ON sp.user_id = u.id
          WHERE pd.prescription_id = $1
-         ORDER BY pd.created_at DESC`,
+         ORDER BY pd.dispensed_at DESC`,
         [id]
     );
 
     return {
         ...prescRes.rows[0],
-        dispenses: dispensesRes.rows,
+        dispenses: dispensesRes.rows.map((r) => ({
+            ...r,
+            dispensed_quantity: Number(r.quantity) || 1,
+            created_at: r.dispensed_at,
+        })),
     };
 }

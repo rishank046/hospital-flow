@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { authService } from '../../services/auth.service';
 import { Alert } from '../../components/common/Alert';
-import type { StaffRole, UserRole } from '../../types/auth.types';
+import type { AuthUser, StaffInfo, StaffRole, UserRole } from '../../types/auth.types';
 
 export function LoginPage() {
   const { login } = useAuth();
@@ -51,56 +51,83 @@ export function LoginPage() {
         password,
       });
 
-      const token = response.token;
-      const user = response.user;
-      const role = (user?.role || 'PATIENT').toUpperCase() as UserRole;
-      const staffRole = (user?.staffRole || response.staff?.role)?.toUpperCase() as StaffRole | undefined;
+      const token = response.data?.token || response.token;
+      const user = response.data?.user || response.user;
+      const staff = response.data?.staff ?? response.staff ?? null;
 
-      const isDoctor = role === 'DOCTOR' || (role === 'STAFF' && staffRole === 'DOCTOR');
-
-      if (role === 'PATIENT') {
-        login(token, 'PATIENT', {
-          id: user?.id,
-          name: user?.name || 'Patient',
-          email: user?.email || email.trim(),
-          role: 'PATIENT',
-        });
-        window.history.pushState({}, '', '/patient/dashboard');
-        window.dispatchEvent(new PopStateEvent('popstate'));
-      } else if (role === 'ADMIN') {
-        login(token, 'ADMIN', {
-          id: user?.id,
-          name: user?.name || 'Administrator',
-          email: user?.email || email.trim(),
-          role: 'ADMIN',
-        });
-        window.history.pushState({}, '', '/admin/dashboard');
-        window.dispatchEvent(new PopStateEvent('popstate'));
-      } else if (isDoctor) {
-        login(token, 'STAFF', {
-          id: response.doctor?.id || user?.id,
-          name: response.doctor?.name || user?.name || 'Doctor',
-          email: response.doctor?.email || user?.email || email.trim(),
-          role: 'STAFF',
-          staffRole: 'DOCTOR',
-          specialization: response.doctor?.specialization,
-          department: response.doctor?.department,
-        });
-        window.history.pushState({}, '', '/doctor/dashboard');
-        window.dispatchEvent(new PopStateEvent('popstate'));
-      } else {
-        // STAFF with any other staffRole
-        login(token, 'STAFF', {
-          id: response.staff?.id || user?.id,
-          name: user?.name || 'Staff Member',
-          email: user?.email || email.trim(),
-          role: 'STAFF',
-          staffRole: staffRole || 'RECEPTIONIST',
-          employeeCode: response.staff?.employeeCode,
-        });
-        window.history.pushState({}, '', '/staff/dashboard');
-        window.dispatchEvent(new PopStateEvent('popstate'));
+      if (!token || !user) {
+        throw new Error('Authentication response is missing required session tokens.');
       }
+
+      const role = (user.role || 'USER').toUpperCase() as UserRole;
+      const staffRole = (staff?.staffRole || staff?.role || user.staffRole)?.toUpperCase() as StaffRole | undefined;
+
+      const authUser: AuthUser = {
+        id: user.id,
+        name:
+          user.name ||
+          (role === 'ADMIN'
+            ? 'Administrator'
+            : role === 'STAFF'
+            ? (staffRole === 'DOCTOR' ? 'Doctor' : 'Staff Member')
+            : 'User'),
+        email: user.email || email.trim(),
+        role,
+        staffRole,
+        employeeCode: staff?.employeeCode || user.employeeCode,
+        specialization: user.specialization,
+        department: staff?.department || user.department,
+      };
+
+      const staffInfo: StaffInfo | null = (role === 'STAFF' && (staff || staffRole)) ? {
+        id: staff?.id || '',
+        staffRole: (staffRole || 'OPD_MANAGER') as StaffRole,
+        role: (staffRole || 'OPD_MANAGER') as StaffRole,
+        employeeCode: staff?.employeeCode,
+        status: staff?.status,
+        department: staff?.department,
+      } : null;
+
+      login(token, authUser, staffInfo);
+
+      // Post-login routing strictly based on backend roles
+      let targetRoute = '/user';
+      if (role === 'ADMIN') {
+        targetRoute = '/admin';
+      } else if (role === 'USER' || role === 'PATIENT') {
+        targetRoute = '/user';
+      } else if (role === 'STAFF') {
+        switch (staffRole) {
+          case 'DOCTOR':
+            targetRoute = '/staff/doctor';
+            break;
+          case 'OPD_MANAGER':
+            targetRoute = '/staff/opd';
+            break;
+          case 'LAB_TECH':
+          case 'LAB_STAFF':
+            targetRoute = '/staff/lab';
+            break;
+          case 'PHARMACIST':
+            targetRoute = '/staff/pharmacy';
+            break;
+          case 'BILLING_CLERK':
+            targetRoute = '/staff/billing';
+            break;
+          case 'NURSE':
+            targetRoute = '/staff/nurse';
+            break;
+          case 'RECEPTIONIST':
+            targetRoute = '/staff/opd';
+            break;
+          default:
+            targetRoute = '/staff/opd';
+            break;
+        }
+      }
+
+      window.history.pushState({}, '', targetRoute);
+      window.dispatchEvent(new PopStateEvent('popstate'));
     } catch (submitError) {
       setError(
         submitError instanceof Error

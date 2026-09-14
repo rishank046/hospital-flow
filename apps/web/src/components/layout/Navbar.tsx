@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type MouseEvent } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { Badge } from '../common/Badge';
 
@@ -30,15 +30,45 @@ export function Navbar({ isSidebarOpen = false, onToggleSidebar }: NavbarProps =
       ? 'Admin'
       : isStaff
       ? 'Staff'
-      : 'Patient');
+      : 'User');
 
-  const homeHref = isDoctor
-    ? '/doctor/dashboard'
-    : isAdmin
-    ? '/admin/dashboard'
-    : isStaff
-    ? '/staff/dashboard'
-    : '/patient/dashboard';
+  let homeHref = '/user/dashboard';
+  if (isAdmin) {
+    homeHref = '/admin/dashboard';
+  } else if (isDoctor) {
+    homeHref = '/staff/doctor/dashboard';
+  } else if (isStaff) {
+    switch (staffRole) {
+      case 'OPD_MANAGER':
+      case 'RECEPTIONIST':
+        homeHref = '/staff/opd';
+        break;
+      case 'LAB_TECH':
+      case 'LAB_STAFF':
+        homeHref = '/staff/lab';
+        break;
+      case 'PHARMACIST':
+        homeHref = '/staff/pharmacy';
+        break;
+      case 'BILLING_CLERK':
+        homeHref = '/staff/billing';
+        break;
+      case 'NURSE':
+        homeHref = '/staff/nurse';
+        break;
+      default:
+        homeHref = '/staff/opd';
+        break;
+    }
+  }
+
+  const navigateToHome = (e: MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    if (window.location.pathname !== homeHref) {
+      window.history.pushState({}, '', homeHref);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+  };
 
   return (
     <header className="app-navbar">
@@ -56,7 +86,7 @@ export function Navbar({ isSidebarOpen = false, onToggleSidebar }: NavbarProps =
             <span className="hamburger-bar" />
           </button>
         )}
-        <a href={homeHref} className="brand-link">
+        <a href={homeHref} onClick={navigateToHome} className="brand-link">
           <div className="brand-mark" aria-hidden="true">
             <span />
             <span />

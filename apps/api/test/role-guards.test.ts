@@ -58,7 +58,7 @@ describe("Role Guards & Authorization Enforcement", { timeout: 30000 }, () => {
 
         // 1. Seed Doctor (User -> Staff -> Doctor)
         const docUserRes = await pool.query(
-            `INSERT INTO "User" (name, email, password, role)
+            `INSERT INTO "users" (name, email, password, role)
              VALUES ($1, $2, $3, 'STAFF')
              RETURNING id`,
             ["Dr. Guard Specialist", doctorEmail, hashedPassword]
@@ -66,7 +66,7 @@ describe("Role Guards & Authorization Enforcement", { timeout: 30000 }, () => {
         doctorUserId = docUserRes.rows[0].id;
 
         const docStaffRes = await pool.query(
-            `INSERT INTO "Staff" (user_id, employee_code, role, status)
+            `INSERT INTO "staff_profiles" (user_id, employee_code, staff_role, status)
              VALUES ($1, $2, 'DOCTOR', 'ACTIVE')
              RETURNING id`,
             [doctorUserId, `DOC-GD-${testTag}`]
@@ -74,10 +74,10 @@ describe("Role Guards & Authorization Enforcement", { timeout: 30000 }, () => {
         doctorStaffId = docStaffRes.rows[0].id;
 
         const docRes = await pool.query(
-            `INSERT INTO "Doctor" (staff_id, specialization, department, name, email)
-             VALUES ($1, 'Cardiology', 'Cardiology', 'Dr. Guard Specialist', $2)
+            `INSERT INTO "doctors" (staff_id, specialization, license_number)
+             VALUES ($1, 'Cardiology', $2)
              RETURNING id`,
-            [doctorStaffId, doctorEmail]
+            [doctorStaffId, `LIC-DOC-${testTag}`]
         );
         doctorId = docRes.rows[0].id;
 
@@ -89,7 +89,7 @@ describe("Role Guards & Authorization Enforcement", { timeout: 30000 }, () => {
 
         // 2. Seed Nurse (User -> Staff)
         const nurseUserRes = await pool.query(
-            `INSERT INTO "User" (name, email, password, role)
+            `INSERT INTO "users" (name, email, password, role)
              VALUES ($1, $2, $3, 'STAFF')
              RETURNING id`,
             ["Nurse Guard", nurseEmail, hashedPassword]
@@ -97,7 +97,7 @@ describe("Role Guards & Authorization Enforcement", { timeout: 30000 }, () => {
         nurseUserId = nurseUserRes.rows[0].id;
 
         const nurseStaffRes = await pool.query(
-            `INSERT INTO "Staff" (user_id, employee_code, role, status)
+            `INSERT INTO "staff_profiles" (user_id, employee_code, staff_role, status)
              VALUES ($1, $2, 'NURSE', 'ACTIVE')
              RETURNING id`,
             [nurseUserId, `NUR-GD-${testTag}`]
@@ -112,39 +112,39 @@ describe("Role Guards & Authorization Enforcement", { timeout: 30000 }, () => {
 
         // 3. Seed Patient A (User -> Patient)
         const patAUserRes = await pool.query(
-            `INSERT INTO "User" (name, email, password, role)
-             VALUES ($1, $2, $3, 'PATIENT')
+            `INSERT INTO "users" (name, email, password, role)
+             VALUES ($1, $2, $3, 'USER')
              RETURNING id`,
             ["Patient Alpha", patientAEmail, hashedPassword]
         );
         patientAUserId = patAUserRes.rows[0].id;
 
         const patARes = await pool.query(
-            `INSERT INTO "Patient" (owner_user_id, name, age, gender, patient_type)
-             VALUES ($1, 'Patient Alpha', 30, 'Female', 'Online')
+            `INSERT INTO "patient_profiles" (owner_user_id, name, date_of_birth, gender)
+             VALUES ($1, 'Patient Alpha', '1994-01-01', 'Female')
              RETURNING id`,
             [patientAUserId]
         );
         patientAId = patARes.rows[0].id;
 
         patientAToken = jwt.sign(
-            { userId: patientAUserId, email: patientAEmail, role: "PATIENT" },
+            { userId: patientAUserId, email: patientAEmail, role: "USER" },
             jwtSecret,
             { expiresIn: "4h" }
         );
 
         // 4. Seed Patient B (User -> Patient)
         const patBUserRes = await pool.query(
-            `INSERT INTO "User" (name, email, password, role)
-             VALUES ($1, $2, $3, 'PATIENT')
+            `INSERT INTO "users" (name, email, password, role)
+             VALUES ($1, $2, $3, 'USER')
              RETURNING id`,
             ["Patient Beta", patientBEmail, hashedPassword]
         );
         patientBUserId = patBUserRes.rows[0].id;
 
         const patBRes = await pool.query(
-            `INSERT INTO "Patient" (owner_user_id, name, age, gender, patient_type)
-             VALUES ($1, 'Patient Beta', 42, 'Male', 'Online')
+            `INSERT INTO "patient_profiles" (owner_user_id, name, date_of_birth, gender)
+             VALUES ($1, 'Patient Beta', '1982-01-01', 'Male')
              RETURNING id`,
             [patientBUserId]
         );
@@ -158,8 +158,8 @@ describe("Role Guards & Authorization Enforcement", { timeout: 30000 }, () => {
 
         // 5. Seed Admin
         const adminRes = await pool.query(
-            `INSERT INTO "Admin" (name, email, password)
-             VALUES ($1, $2, $3)
+            `INSERT INTO "users" (name, email, password, role)
+             VALUES ($1, $2, $3, 'ADMIN')
              RETURNING id`,
             ["Admin Guard", adminEmail, hashedPassword]
         );
@@ -174,19 +174,21 @@ describe("Role Guards & Authorization Enforcement", { timeout: 30000 }, () => {
 
     afterAll(async () => {
         // Cleanup
-        if (patientAId) await pool.query('DELETE FROM "Patient" WHERE id = $1', [patientAId]);
-        if (patientBId) await pool.query('DELETE FROM "Patient" WHERE id = $1', [patientBId]);
-        if (patientAUserId) await pool.query('DELETE FROM "User" WHERE id = $1', [patientAUserId]);
-        if (patientBUserId) await pool.query('DELETE FROM "User" WHERE id = $1', [patientBUserId]);
+        if (patientAId) await pool.query('DELETE FROM "patient_profiles" WHERE id = $1', [patientAId]);
+        if (patientBId) await pool.query('DELETE FROM "patient_profiles" WHERE id = $1', [patientBId]);
+        if (patientAUserId) await pool.query('DELETE FROM "users" WHERE id = $1', [patientAUserId]);
+        if (patientBUserId) await pool.query('DELETE FROM "users" WHERE id = $1', [patientBUserId]);
 
-        if (doctorId) await pool.query('DELETE FROM "Doctor" WHERE id = $1', [doctorId]);
-        if (doctorStaffId) await pool.query('DELETE FROM "Staff" WHERE id = $1', [doctorStaffId]);
-        if (doctorUserId) await pool.query('DELETE FROM "User" WHERE id = $1', [doctorUserId]);
+        if (doctorId) await pool.query('DELETE FROM "doctors" WHERE id = $1', [doctorId]);
+        if (doctorStaffId) await pool.query('DELETE FROM "staff_profiles" WHERE id = $1', [doctorStaffId]);
+        if (doctorUserId) await pool.query('DELETE FROM "users" WHERE id = $1', [doctorUserId]);
 
-        if (nurseStaffId) await pool.query('DELETE FROM "Staff" WHERE id = $1', [nurseStaffId]);
-        if (nurseUserId) await pool.query('DELETE FROM "User" WHERE id = $1', [nurseUserId]);
+        if (nurseStaffId) {
+            await pool.query('DELETE FROM "staff_profiles" WHERE id = $1', [nurseStaffId]);
+        }
+        if (nurseUserId) await pool.query('DELETE FROM "users" WHERE id = $1', [nurseUserId]);
 
-        if (adminId) await pool.query('DELETE FROM "Admin" WHERE id = $1', [adminId]);
+        if (adminId) await pool.query('DELETE FROM "users" WHERE id = $1', [adminId]);
 
         if (server) {
             await new Promise<void>((resolve) => server.close(() => resolve()));

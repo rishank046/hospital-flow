@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { loginSchema, registerSchema } from "#modules/auth/auth.schema.js";
-import { loginService, logoutService, registerService } from "#modules/auth/auth.service.js";
+import { loginService, logoutService, meService, registerService } from "#modules/auth/auth.service.js";
 import { AppError } from "#utils/errorHandler.js";
 const notImplemented = (_request: Request, response: Response) => {
 	response.status(501).json({ message: "Authentication endpoint not implemented" });
@@ -10,6 +10,7 @@ const authController = {
 	login: notImplemented,
 	register: notImplemented,
 	logout: notImplemented,
+	me: notImplemented,
 	refresh: notImplemented,
 	forgotPassword: notImplemented,
 	resetPassword: notImplemented,
@@ -20,6 +21,15 @@ async function login(request: Request, response: Response) {
 	const result = await loginService(email, password);
 
 	response.status(200).json(result);
+}
+
+async function me(request: Request, response: Response) {
+    const userId = request.user?.userId || request.tokenPayload?.userId;
+    if (!userId) {
+        throw new AppError("Authentication identity missing", 401);
+    }
+    const result = await meService(userId);
+    response.status(200).json(result);
 }
 
 async function register(request: Request, response: Response) {
@@ -55,5 +65,6 @@ async function logout(request: Request, response: Response) {
 authController.login = login;
 authController.register = register;
 authController.logout = logout;
+authController.me = me;
 
 export default authController;
