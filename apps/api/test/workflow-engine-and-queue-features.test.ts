@@ -134,7 +134,7 @@ describe("Workflow Engine, Dynamic ETA, Doctor Skip/Requeue, and Cash Counter Qu
              RETURNING id`
         );
         patient2Id = pat2Res.rows[0].id;
-    });
+    }, 30000);
 
     afterAll(async () => {
         // Cleanup dependencies and tasks

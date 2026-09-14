@@ -109,9 +109,6 @@ describe("Visit Lifecycle - End-to-End Flow", () => {
 
         const emails = [receptionistEmail, nurseEmail, doctorEmail, pharmacistEmail, labTechEmail];
         await pool.query('DELETE FROM "doctors" WHERE staff_id IN (SELECT id FROM "staff_profiles" WHERE user_id IN (SELECT id FROM "users" WHERE email = ANY($1)))', [emails]);
-        await pool.query('DELETE FROM "nurses" WHERE staff_id IN (SELECT id FROM "staff_profiles" WHERE user_id IN (SELECT id FROM "users" WHERE email = ANY($1)))', [emails]);
-        await pool.query('DELETE FROM "pharmacists" WHERE staff_id IN (SELECT id FROM "staff_profiles" WHERE user_id IN (SELECT id FROM "users" WHERE email = ANY($1)))', [emails]);
-        await pool.query('DELETE FROM "lab_technicians" WHERE staff_id IN (SELECT id FROM "staff_profiles" WHERE user_id IN (SELECT id FROM "users" WHERE email = ANY($1)))', [emails]);
         await pool.query('DELETE FROM "staff_profiles" WHERE user_id IN (SELECT id FROM "users" WHERE email = ANY($1))', [emails]);
         await pool.query('DELETE FROM "users" WHERE email = ANY($1)', [emails]);
 

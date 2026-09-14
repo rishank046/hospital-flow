@@ -18,6 +18,7 @@ import {
     listDoctors,
     getDoctorById,
 } from "#modules/doctors/doctors.controller.js";
+import { getDoctorAvailability } from "#modules/appointments/appointments.controller.js";
 import { authenticate, requireRole } from "#middleware/auth.middleware.js";
 import wrapper from "#utils/wrapper.js";
 const router = express.Router();
@@ -25,6 +26,7 @@ const router = express.Router();
 router.post("/login", wrapper(login));
 router.get("/", wrapper(listDoctors));
 router.get("/byId/:doctorId", wrapper(getDoctorById));
+router.get("/:doctorId/availability", wrapper(getDoctorAvailability));
 
 router.get(
     "/me",

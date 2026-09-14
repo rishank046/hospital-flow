@@ -16,7 +16,7 @@ export type LoginResult = {
             id: string;
             name: string;
             email: string;
-            role: "USER" | "STAFF" | "ADMIN";
+            role: "PATIENT" | "USER" | "STAFF" | "ADMIN";
             staffRole?: StaffRole | undefined;
         };
         staff: {
@@ -40,7 +40,7 @@ export type LoginResult = {
         id: string;
         name: string;
         email: string;
-        role: "USER" | "STAFF" | "ADMIN";
+        role: "PATIENT" | "USER" | "STAFF" | "ADMIN";
         staffRole?: StaffRole | undefined;
     };
     staff?: {
@@ -120,8 +120,8 @@ export async function loginService(email: string, password: string): Promise<Log
             throw new AppError("Account is inactive", 403);
         }
 
-        const rawRole = String(row.role ?? "USER").toUpperCase();
-        let role: "USER" | "STAFF" | "ADMIN" = "USER";
+        const rawRole = String(row.role ?? "PATIENT").toUpperCase();
+        let role: "PATIENT" | "USER" | "STAFF" | "ADMIN" = "PATIENT";
         let staffRole: StaffRole | undefined = undefined;
 
         if (rawRole === "ADMIN") {
@@ -130,13 +130,13 @@ export async function loginService(email: string, password: string): Promise<Log
             role = "STAFF";
             staffRole = (row.staff_role as StaffRole) || (row.doctor_id ? "DOCTOR" : undefined);
         } else {
-            role = "USER";
+            role = "PATIENT";
         }
 
         const tokenPayload: {
             userId: string;
             email: string;
-            role: "USER" | "STAFF" | "ADMIN";
+            role: "PATIENT" | "USER" | "STAFF" | "ADMIN";
             staffRole?: StaffRole;
         } = {
             userId: row.id,
@@ -236,8 +236,8 @@ export async function meService(userId: string) {
         throw new AppError("Account is inactive", 403);
     }
 
-    const rawRole = String(row.role ?? "USER").toUpperCase();
-    let role: "USER" | "STAFF" | "ADMIN" = "USER";
+    const rawRole = String(row.role ?? "PATIENT").toUpperCase();
+    let role: "PATIENT" | "USER" | "STAFF" | "ADMIN" = "PATIENT";
     let staffRole: StaffRole | undefined = undefined;
 
     if (rawRole === "ADMIN") {
@@ -246,7 +246,7 @@ export async function meService(userId: string) {
         role = "STAFF";
         staffRole = (row.staff_role as StaffRole) || (row.doctor_id ? "DOCTOR" : undefined);
     } else {
-        role = "USER";
+        role = "PATIENT";
     }
 
     const userObj = {
@@ -305,7 +305,7 @@ export async function registerService(
 
     try {
         const result = await pool.query(
-            'INSERT INTO "users" (name, email, password, role) VALUES ($1, $2, $3, \'USER\') RETURNING id, email',
+            'INSERT INTO "users" (name, email, password, role) VALUES ($1, $2, $3, \'PATIENT\') RETURNING id, email',
             [name, email, hashedPassword],
         );
 

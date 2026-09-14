@@ -52,12 +52,12 @@ This file is a living checklist. AI agents should update it only after the relev
 
 ## Appointments
 
-- [ ] Doctor availability endpoint
-- [ ] Appointment creation
-- [ ] Appointment conflict protection
-- [ ] Appointment cancellation
-- [ ] Check-in
-- [ ] Appointment-to-visit transition
+- [x] Doctor availability endpoint
+- [x] Appointment creation
+- [x] Appointment conflict protection
+- [x] Appointment cancellation
+- [x] Check-in
+- [x] Appointment-to-visit transition
 - [x] Dynamic estimated wait
 
 ## Doctor
@@ -84,20 +84,20 @@ This file is a living checklist. AI agents should update it only after the relev
 
 - [ ] Lab queue
 - [ ] Accept/claim lab task
-- [ ] Sample collection
+- [x] Sample collection
 - [ ] Test processing
-- [ ] Result entry
+- [x] Result entry
 - [ ] Result verification/publication
-- [ ] Patient report access
-- [ ] Doctor report access
+- [x] Patient report access
+- [x] Doctor report access
 
 ## Pharmacy
 
 - [ ] Pharmacy queue
-- [ ] Pharmacy task activation after dependencies
-- [ ] View prescription
-- [ ] Dispense medication
-- [ ] Complete pharmacy task
+- [x] Pharmacy task activation after dependencies
+- [x] View prescription
+- [x] Dispense medication
+- [x] Complete pharmacy task
 
 ## Billing / payments
 
