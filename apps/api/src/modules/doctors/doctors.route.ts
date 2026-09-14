@@ -9,6 +9,8 @@ import {
     getMySchedule,
     getPatient,
     getPatientReports,
+    requeueQueueEntry,
+    skipDoctorActive,
     skipQueueEntry,
     updateConsultation,
     updateMyProfile,
@@ -106,6 +108,20 @@ router.post(
     authenticate,
     requireRole("DOCTOR"),
     wrapper(skipQueueEntry)
+);
+
+router.post(
+    "/queue/:queueEntryId/requeue",
+    authenticate,
+    requireRole("DOCTOR"),
+    wrapper(requeueQueueEntry)
+);
+
+router.post(
+    "/queue/skip",
+    authenticate,
+    requireRole("DOCTOR"),
+    wrapper(skipDoctorActive)
 );
 
 export default router;

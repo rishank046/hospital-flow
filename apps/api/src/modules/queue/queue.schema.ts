@@ -8,6 +8,7 @@ export const queueTypeEnum = z.enum([
     "DIAGNOSTICS",
     "PHARMACY",
     "BILLING",
+    "CASH_COUNTER",
 ]);
 
 export const queueStatusEnum = z.enum([
@@ -58,6 +59,12 @@ export const queueFilterQuerySchema = z.object({
     status: queueStatusEnum.optional(),
 });
 
+export const requeueQueueSchema = z.object({
+    strategy: z.enum(["fair", "top", "end"]).optional().default("fair"),
+    priority: z.number().int().optional(),
+});
+
 export type JoinQueueInput = z.infer<typeof joinQueueSchema>;
 export type UpdateQueueStatusInput = z.infer<typeof updateQueueStatusSchema>;
 export type QueueFilterQuery = z.infer<typeof queueFilterQuerySchema>;
+export type RequeueQueueInput = z.infer<typeof requeueQueueSchema>;

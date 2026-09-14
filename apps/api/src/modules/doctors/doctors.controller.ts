@@ -12,9 +12,11 @@ import {
 import {
     completeQueueEntryService,
     getMyDoctorQueueService,
+    requeueQueueEntryService,
+    skipDoctorActiveEntryService,
     skipQueueEntryService,
 } from "#modules/queue/queue.service.js";
-import { queueEntryIdParamSchema } from "#modules/queue/queue.schema.js";
+import { queueEntryIdParamSchema, requeueQueueSchema } from "#modules/queue/queue.schema.js";
 import {
     createConsultationService,
     createInvestigationOrderService,
@@ -141,5 +143,20 @@ export async function skipQueueEntry(request: Request, response: Response) {
     const doctorId = await getDoctorId(request);
     const { queueEntryId } = queueEntryIdParamSchema.parse(request.params);
     const result = await skipQueueEntryService(queueEntryId, doctorId);
+    response.status(200).json(result);
+}
+
+export async function skipDoctorActive(request: Request, response: Response) {
+    const doctorId = await getDoctorId(request);
+    const result = await skipDoctorActiveEntryService(doctorId);
+    response.status(200).json(result);
+}
+
+export async function requeueQueueEntry(request: Request, response: Response) {
+    const doctorId = await getDoctorId(request);
+    const { queueEntryId } = queueEntryIdParamSchema.parse(request.params);
+    const authUser = request.user || request.tokenPayload;
+    const parsed = requeueQueueSchema.parse(request.body || {});
+    const result = await requeueQueueEntryService(queueEntryId, doctorId, authUser, parsed);
     response.status(200).json(result);
 }

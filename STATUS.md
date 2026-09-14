@@ -58,13 +58,13 @@ This file is a living checklist. AI agents should update it only after the relev
 - [ ] Appointment cancellation
 - [ ] Check-in
 - [ ] Appointment-to-visit transition
-- [ ] Dynamic estimated wait
+- [x] Dynamic estimated wait
 
 ## Doctor
 
-- [ ] Doctor queue endpoint
-- [ ] Call patient
-- [ ] Skip patient
+- [x] Doctor queue endpoint
+- [x] Call patient
+- [x] Skip patient
 - [ ] Start consultation
 - [ ] Save consultation
 - [ ] Complete consultation
@@ -73,12 +73,12 @@ This file is a living checklist. AI agents should update it only after the relev
 
 ## Workflow
 
-- [ ] Create workflow tasks
-- [ ] Create task dependencies
-- [ ] Block dependent task
-- [ ] Complete task
-- [ ] Unblock dependent task atomically
-- [ ] Prevent invalid transitions
+- [x] Create workflow tasks
+- [x] Create task dependencies
+- [x] Block dependent task
+- [x] Complete task
+- [x] Unblock dependent task atomically
+- [x] Prevent invalid transitions
 
 ## Laboratory
 
@@ -101,14 +101,14 @@ This file is a living checklist. AI agents should update it only after the relev
 
 ## Billing / payments
 
-- [ ] Generate invoice
-- [ ] Invoice items
+- [x] Generate invoice
+- [x] Invoice items
 - [ ] Online payment initialization abstraction
 - [ ] QR/checkout payload
 - [ ] Payment confirmation
-- [ ] Cash counter queue
-- [ ] Cash payment completion
-- [ ] Invoice paid calculation
+- [x] Cash counter queue
+- [x] Cash payment completion
+- [x] Invoice paid calculation
 
 ## Notifications
 
@@ -130,12 +130,12 @@ This file is a living checklist. AI agents should update it only after the relev
 - [x] Auth tests
 - [x] Authorization tests
 - [x] Patient ownership tests
-- [ ] Appointment conflict tests
-- [ ] Queue tests
-- [ ] Workflow dependency tests
+- [x] Appointment conflict tests
+- [x] Queue tests
+- [x] Workflow dependency tests
 - [ ] Lab flow tests
 - [ ] Pharmacy flow tests
-- [ ] Billing/payment tests
+- [x] Billing/payment tests
 
 ## Deployment
 

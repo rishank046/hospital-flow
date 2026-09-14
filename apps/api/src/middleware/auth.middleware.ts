@@ -98,7 +98,7 @@ export const requireRole = (
     const userRole = user.role;
     const isPatientMatch = (role === "PATIENT" || role === "USER") && (userRole === "PATIENT" || userRole === "USER");
     const isDoctorMatch = role === "DOCTOR" && userRole === "STAFF" && user.staffRole === "DOCTOR";
-    const isStaffMatch = role === "STAFF" && userRole === "STAFF";
+    const isStaffMatch = role === "STAFF" && (userRole === "STAFF" || userRole === "ADMIN");
     const isExactMatch = (userRole as string) === role;
 
     if (!isPatientMatch && !isDoctorMatch && !isStaffMatch && !isExactMatch) {
