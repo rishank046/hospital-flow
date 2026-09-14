@@ -5,33 +5,37 @@ import { AppError } from "#utils/errorHandler.js";
 import { loginService } from "#modules/auth/auth.service.js";
 import type {
     AdminLoginInput,
-    CreateDoctorInput,
+    CreateDoctorAdminInput,
     CreateStaffInput,
     UpdateStaffInput,
     UpdateStaffStatusInput,
 } from "./admin.schema.js";
 
-interface DoctorListRow {
-    id: string;
-    name: string;
-    email: string;
-    specialization: string;
-    department: string;
-    created_at: Date;
-}
-
 export async function adminLoginService(data: AdminLoginInput) {
     return loginService(data.email, data.password);
 }
 
-export async function createDoctorService(data: CreateDoctorInput) {
+interface DoctorListRow {
+    id: string;
+    staff_id?: string;
+    name: string;
+    email: string;
+    specialization: string;
+    department?: string | null;
+    license_number?: string | null;
+    status?: string;
+    employee_code?: string;
+    created_at: Date;
+}
+
+export async function createDoctorService(data: CreateDoctorAdminInput) {
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
 
         const normalizedEmail = data.email.toLowerCase().trim();
         const existing = await client.query<{ id: string }>(
-            'SELECT id FROM "Doctor" WHERE email = $1',
+            'SELECT id FROM "users" WHERE email = $1',
             [normalizedEmail]
         );
 
@@ -41,84 +45,64 @@ export async function createDoctorService(data: CreateDoctorInput) {
 
         const hashedPassword = await bcrypt.hash(data.password, 10);
 
-        // Create or find User
-        let userId: string;
-        const userRes = await client.query<{ id: string }>(
-            'SELECT id FROM "User" WHERE email = $1',
-            [normalizedEmail]
-        );
-
-        if (userRes.rowCount && userRes.rows[0]) {
-            userId = userRes.rows[0].id;
-            await client.query(
-                'UPDATE "User" SET role = $1, is_active = true WHERE id = $2',
-                ["STAFF", userId]
-            );
-        } else {
-            const newUser = await client.query<{ id: string }>(
-                `INSERT INTO "User" (name, email, password, role, is_active)
-                 VALUES ($1, $2, $3, 'STAFF', true)
-                 RETURNING id`,
-                [data.name.trim(), normalizedEmail, hashedPassword]
-            );
-            userId = newUser.rows[0]!.id;
-        }
-
-        // Create Staff record
-        const employeeCode = `DOC-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 1000)}`;
-        const staffRes = await client.query<{ id: string }>(
-            `INSERT INTO "Staff" (user_id, employee_code, role, status)
-             VALUES ($1, $2, 'DOCTOR', 'ACTIVE')
+        // 1. Create User
+        const newUser = await client.query<{ id: string }>(
+            `INSERT INTO "users" (name, email, password, role, is_active)
+             VALUES ($1, $2, $3, 'STAFF', true)
              RETURNING id`,
-            [userId, employeeCode]
+            [data.name.trim(), normalizedEmail, hashedPassword]
         );
-        const staffId = staffRes.rows[0]!.id;
+        const userId = newUser.rows[0]!.id;
 
-        // Find or create Department
+        // 2. Find or create Department
         let departmentId: string | null = null;
         const deptRes = await client.query<{ id: string }>(
-            'SELECT id FROM "Department" WHERE name ILIKE $1',
+            'SELECT id FROM "departments" WHERE name ILIKE $1',
             [data.department.trim()]
         );
         if (deptRes.rowCount && deptRes.rows[0]) {
             departmentId = deptRes.rows[0].id;
         } else {
             const newDept = await client.query<{ id: string }>(
-                'INSERT INTO "Department" (name) VALUES ($1) RETURNING id',
+                'INSERT INTO "departments" (name) VALUES ($1) RETURNING id',
                 [data.department.trim()]
             );
             departmentId = newDept.rows[0]?.id ?? null;
         }
 
-        if (departmentId) {
-            await client.query('UPDATE "Staff" SET department_id = $1 WHERE id = $2', [
-                departmentId,
-                staffId,
-            ]);
-        }
+        // 3. Create Staff record
+        const employeeCode = `DOC-${Date.now().toString().slice(-6)}-${Math.floor(1000 + Math.random() * 9000)}`;
+        const staffRes = await client.query<{ id: string }>(
+            `INSERT INTO "staff_profiles" (user_id, employee_code, staff_role, status, department_id)
+             VALUES ($1, $2, 'DOCTOR', 'ACTIVE', $3)
+             RETURNING id`,
+            [userId, employeeCode, departmentId]
+        );
+        const staffId = staffRes.rows[0]!.id;
 
-        const result = await client.query<DoctorListRow>(
-            `INSERT INTO "Doctor" (staff_id, department_id, name, email, password, specialization, department)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             RETURNING id, name, email, specialization, department, created_at`,
-            [
-                staffId,
-                departmentId,
-                data.name.trim(),
-                normalizedEmail,
-                hashedPassword,
-                data.specialization,
-                data.department.trim(),
-            ]
+        // 4. Create Doctor record
+        const docResult = await client.query(
+            `INSERT INTO "doctors" (staff_id, specialization, license_number)
+             VALUES ($1, $2, $3)
+             RETURNING id, staff_id, specialization, license_number, created_at`,
+            [staffId, data.specialization, null]
         );
 
-        const doctor = result.rows[0];
-        if (!doctor) {
+        const doctorRow = docResult.rows[0];
+        if (!doctorRow) {
             throw new AppError("Failed to create doctor", 500);
         }
 
         await client.query("COMMIT");
-        return doctor;
+
+        return {
+            id: doctorRow.id,
+            name: data.name.trim(),
+            email: normalizedEmail,
+            specialization: doctorRow.specialization,
+            department: data.department.trim(),
+            created_at: doctorRow.created_at,
+        };
     } catch (error) {
         await client.query("ROLLBACK");
         throw error;
@@ -134,9 +118,9 @@ export async function createStaffService(data: CreateStaffInput) {
 
         const normalizedEmail = data.email.toLowerCase().trim();
 
-        // 1. Check email uniqueness in User table
+        // 1. Check email uniqueness in users table
         const userCheck = await client.query<{ id: string }>(
-            'SELECT id FROM "User" WHERE email = $1',
+            'SELECT id FROM "users" WHERE email = $1',
             [normalizedEmail]
         );
         if (userCheck.rowCount && userCheck.rowCount > 0) {
@@ -152,7 +136,7 @@ export async function createStaffService(data: CreateStaffInput) {
         }
 
         const codeCheck = await client.query<{ id: string }>(
-            'SELECT id FROM "Staff" WHERE employee_code = $1',
+            'SELECT id FROM "staff_profiles" WHERE employee_code = $1',
             [employeeCode]
         );
         if (codeCheck.rowCount && codeCheck.rowCount > 0) {
@@ -167,7 +151,7 @@ export async function createStaffService(data: CreateStaffInput) {
         const status = data.status ?? "ACTIVE";
         const isActive = status === "ACTIVE";
 
-        // 4. Insert into User table
+        // 4. Insert into users table
         const userRes = await client.query<{
             id: string;
             name: string;
@@ -176,7 +160,7 @@ export async function createStaffService(data: CreateStaffInput) {
             is_active: boolean;
             created_at: Date;
         }>(
-            `INSERT INTO "User" (name, email, password, role, is_active)
+            `INSERT INTO "users" (name, email, password, role, is_active)
              VALUES ($1, $2, $3, 'STAFF', $4)
              RETURNING id, name, email, role, is_active, created_at`,
             [data.name.trim(), normalizedEmail, hashedPassword, isActive]
@@ -192,7 +176,7 @@ export async function createStaffService(data: CreateStaffInput) {
 
         if (departmentId && !departmentName) {
             const deptRes = await client.query<{ id: string; name: string }>(
-                'SELECT id, name FROM "Department" WHERE id = $1',
+                'SELECT id, name FROM "departments" WHERE id = $1',
                 [departmentId]
             );
             if (deptRes.rowCount && deptRes.rows[0]) {
@@ -200,7 +184,7 @@ export async function createStaffService(data: CreateStaffInput) {
             }
         } else if (departmentName && !departmentId) {
             const deptRes = await client.query<{ id: string; name: string }>(
-                'SELECT id, name FROM "Department" WHERE name ILIKE $1',
+                'SELECT id, name FROM "departments" WHERE name ILIKE $1',
                 [departmentName]
             );
             if (deptRes.rowCount && deptRes.rows[0]) {
@@ -208,7 +192,7 @@ export async function createStaffService(data: CreateStaffInput) {
                 departmentName = deptRes.rows[0].name;
             } else {
                 const newDept = await client.query<{ id: string; name: string }>(
-                    'INSERT INTO "Department" (name) VALUES ($1) RETURNING id, name',
+                    'INSERT INTO "departments" (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id, name',
                     [departmentName]
                 );
                 if (newDept.rows[0]) {
@@ -218,19 +202,19 @@ export async function createStaffService(data: CreateStaffInput) {
             }
         }
 
-        // 6. Insert into Staff table
+        // 6. Insert into staff_profiles table
         const staffRes = await client.query<{
             id: string;
             user_id: string;
             employee_code: string;
-            role: string;
+            staff_role: string;
             status: string;
             department_id: string | null;
             created_at: Date;
         }>(
-            `INSERT INTO "Staff" (user_id, employee_code, role, status, department_id)
+            `INSERT INTO "staff_profiles" (user_id, employee_code, staff_role, status, department_id)
              VALUES ($1, $2, $3, $4, $5)
-             RETURNING id, user_id, employee_code, role, status, department_id, created_at`,
+             RETURNING id, user_id, employee_code, staff_role, status, department_id, created_at`,
             [userRow.id, employeeCode, data.role, status, departmentId]
         );
         const staffRow = staffRes.rows[0];
@@ -243,22 +227,20 @@ export async function createStaffService(data: CreateStaffInput) {
         if (data.role === "DOCTOR") {
             const specialization = data.specialization ?? "Cardiology";
             const docRes = await client.query(
-                `INSERT INTO "Doctor" (staff_id, department_id, specialization, department, name, email, license_number)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)
-                 RETURNING id, staff_id, department_id, specialization, department, license_number, created_at`,
+                `INSERT INTO "doctors" (staff_id, specialization, license_number)
+                 VALUES ($1, $2, $3)
+                 RETURNING id, staff_id, specialization, license_number, created_at`,
                 [
                     staffRow.id,
-                    departmentId,
                     specialization,
-                    departmentName ?? "General",
-                    data.name.trim(),
-                    normalizedEmail,
                     data.licenseNumber ?? null,
                 ]
             );
-            doctorRecord = docRes.rows[0] ?? null;
+            doctorRecord = {
+                ...(docRes.rows[0] ?? {}),
+                department: departmentName,
+            };
         }
-
         await client.query("COMMIT");
 
         return {
@@ -268,7 +250,8 @@ export async function createStaffService(data: CreateStaffInput) {
                 user_id: staffRow.user_id,
                 employeeCode: staffRow.employee_code,
                 employee_code: staffRow.employee_code,
-                role: staffRow.role,
+                role: staffRow.staff_role,
+                staff_role: staffRow.staff_role,
                 status: staffRow.status,
                 departmentId: staffRow.department_id,
                 department_id: staffRow.department_id,
@@ -283,8 +266,8 @@ export async function createStaffService(data: CreateStaffInput) {
                 isActive: userRow.is_active,
                 is_active: userRow.is_active,
             },
+            doctor: doctorRecord,
             temporaryPassword,
-            ...(doctorRecord ? { doctor: doctorRecord } : {}),
         };
     } catch (error) {
         await client.query("ROLLBACK");
@@ -294,13 +277,23 @@ export async function createStaffService(data: CreateStaffInput) {
     }
 }
 
-export async function updateStaffStatusService(staffId: string, data: UpdateStaffStatusInput) {
+export async function updateStaffStatusService(
+    staffId: string,
+    data: UpdateStaffStatusInput
+) {
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
 
-        const existing = await client.query<{ id: string; user_id: string }>(
-            'SELECT id, user_id FROM "Staff" WHERE id = $1',
+        // 1. Fetch current staff row
+        const existing = await client.query<{
+            id: string;
+            user_id: string;
+            status: string;
+            staff_role: string;
+            employee_code: string;
+        }>(
+            'SELECT id, user_id, status, staff_role, employee_code FROM "staff_profiles" WHERE id = $1',
             [staffId]
         );
 
@@ -308,41 +301,80 @@ export async function updateStaffStatusService(staffId: string, data: UpdateStaf
             throw new AppError("Staff member not found", 404);
         }
 
-        const userId = existing.rows[0].user_id;
+        const currentStaff = existing.rows[0];
 
-        const updateRes = await client.query<{
+        // 2. Update staff_profiles status
+        const updatedStaffRes = await client.query<{
             id: string;
             user_id: string;
             employee_code: string;
-            role: string;
+            staff_role: string;
             status: string;
             department_id: string | null;
             created_at: Date;
         }>(
-            `UPDATE "Staff"
-             SET status = $1
+            `UPDATE "staff_profiles"
+             SET status = $1, updated_at = CURRENT_TIMESTAMP
              WHERE id = $2
-             RETURNING id, user_id, employee_code, role, status, department_id, created_at`,
+             RETURNING id, user_id, employee_code, staff_role, status, department_id, created_at`,
             [data.status, staffId]
         );
+        const updatedStaff = updatedStaffRes.rows[0]!;
 
-        if (data.status === "INACTIVE" || data.status === "ACTIVE") {
-            const isActive = data.status === "ACTIVE";
+        // 3. If transitioning to INACTIVE, set users.is_active = false
+        if (data.status === "INACTIVE") {
             await client.query(
-                'UPDATE "User" SET is_active = $1 WHERE id = $2',
-                [isActive, userId]
+                'UPDATE "users" SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+                [currentStaff.user_id]
+            );
+        } else if (data.status === "ACTIVE") {
+            await client.query(
+                'UPDATE "users" SET is_active = true, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+                [currentStaff.user_id]
             );
         }
 
+        // Fetch user info
+        const userRes = await client.query<{
+            id: string;
+            name: string;
+            email: string;
+            role: string;
+            is_active: boolean;
+        }>(
+            'SELECT id, name, email, role, is_active FROM "users" WHERE id = $1',
+            [currentStaff.user_id]
+        );
+        const userRow = userRes.rows[0];
+
         await client.query("COMMIT");
 
-        const row = updateRes.rows[0]!;
         return {
-            ...row,
-            employeeCode: row.employee_code,
-            userId: row.user_id,
-            departmentId: row.department_id,
-            createdAt: row.created_at,
+            id: updatedStaff.id,
+            userId: updatedStaff.user_id,
+            employeeCode: updatedStaff.employee_code,
+            role: updatedStaff.staff_role,
+            status: updatedStaff.status,
+            departmentId: updatedStaff.department_id,
+            createdAt: updatedStaff.created_at,
+            staff: {
+                id: updatedStaff.id,
+                userId: updatedStaff.user_id,
+                employeeCode: updatedStaff.employee_code,
+                role: updatedStaff.staff_role,
+                status: updatedStaff.status,
+                departmentId: updatedStaff.department_id,
+                createdAt: updatedStaff.created_at,
+            },
+            user: userRow
+                ? {
+                      id: userRow.id,
+                      name: userRow.name,
+                      email: userRow.email,
+                      role: userRow.role,
+                      isActive: userRow.is_active,
+                  }
+                : null,
         };
     } catch (error) {
         await client.query("ROLLBACK");
@@ -352,7 +384,10 @@ export async function updateStaffStatusService(staffId: string, data: UpdateStaf
     }
 }
 
-export async function updateStaffService(staffId: string, data: UpdateStaffInput) {
+export async function updateStaffService(
+    staffId: string,
+    data: UpdateStaffInput
+) {
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
@@ -360,12 +395,12 @@ export async function updateStaffService(staffId: string, data: UpdateStaffInput
         const existing = await client.query<{
             id: string;
             user_id: string;
-            employee_code: string;
-            role: string;
             status: string;
+            staff_role: string;
+            employee_code: string;
             department_id: string | null;
         }>(
-            'SELECT id, user_id, employee_code, role, status, department_id FROM "Staff" WHERE id = $1',
+            'SELECT id, user_id, status, staff_role, employee_code, department_id FROM "staff_profiles" WHERE id = $1',
             [staffId]
         );
 
@@ -373,124 +408,149 @@ export async function updateStaffService(staffId: string, data: UpdateStaffInput
             throw new AppError("Staff member not found", 404);
         }
 
-        const current = existing.rows[0];
-        const userId = current.user_id;
+        const currentStaff = existing.rows[0];
 
         if (data.email) {
+            const normalizedEmail = data.email.toLowerCase().trim();
             const emailCheck = await client.query<{ id: string }>(
-                'SELECT id FROM "User" WHERE email = $1 AND id != $2',
-                [data.email.toLowerCase().trim(), userId]
+                'SELECT id FROM "users" WHERE email = $1 AND id != $2',
+                [normalizedEmail, currentStaff.user_id]
             );
             if (emailCheck.rowCount && emailCheck.rowCount > 0) {
-                throw new AppError("Email already in use", 409);
+                throw new AppError("A user with this email already exists", 409);
             }
             await client.query(
-                'UPDATE "User" SET email = $1 WHERE id = $2',
-                [data.email.toLowerCase().trim(), userId]
+                'UPDATE "users" SET email = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+                [normalizedEmail, currentStaff.user_id]
             );
         }
 
         if (data.name) {
             await client.query(
-                'UPDATE "User" SET name = $1 WHERE id = $2',
-                [data.name.trim(), userId]
+                'UPDATE "users" SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+                [data.name.trim(), currentStaff.user_id]
             );
         }
 
         if (data.status) {
-            if (data.status === "INACTIVE" || data.status === "ACTIVE") {
+            if (data.status === "INACTIVE") {
                 await client.query(
-                    'UPDATE "User" SET is_active = $1 WHERE id = $2',
-                    [data.status === "ACTIVE", userId]
+                    'UPDATE "users" SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+                    [currentStaff.user_id]
+                );
+            } else if (data.status === "ACTIVE") {
+                await client.query(
+                    'UPDATE "users" SET is_active = true, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+                    [currentStaff.user_id]
                 );
             }
         }
 
-        if (data.employeeCode && data.employeeCode !== current.employee_code) {
-            const codeCheck = await client.query<{ id: string }>(
-                'SELECT id FROM "Staff" WHERE employee_code = $1 AND id != $2',
-                [data.employeeCode.trim(), staffId]
-            );
-            if (codeCheck.rowCount && codeCheck.rowCount > 0) {
-                throw new AppError("A staff member with this employee code already exists", 409);
-            }
-        }
-
-        let resolvedDeptId = current.department_id;
-        let resolvedDeptName: string | null = data.department?.trim() ?? null;
-
+        // Resolve Department
+        let newDepartmentId = currentStaff.department_id;
         if (data.departmentId !== undefined) {
-            resolvedDeptId = data.departmentId;
-        } else if (resolvedDeptName) {
-            const deptRes = await client.query<{ id: string; name: string }>(
-                'SELECT id, name FROM "Department" WHERE name ILIKE $1',
-                [resolvedDeptName]
+            newDepartmentId = data.departmentId;
+        } else if (data.department) {
+            const deptRes = await client.query<{ id: string }>(
+                'SELECT id FROM "departments" WHERE name ILIKE $1',
+                [data.department.trim()]
             );
             if (deptRes.rowCount && deptRes.rows[0]) {
-                resolvedDeptId = deptRes.rows[0].id;
-                resolvedDeptName = deptRes.rows[0].name;
+                newDepartmentId = deptRes.rows[0].id;
             } else {
-                const newDept = await client.query<{ id: string; name: string }>(
-                    'INSERT INTO "Department" (name) VALUES ($1) RETURNING id, name',
-                    [resolvedDeptName]
+                const createdDept = await client.query<{ id: string }>(
+                    'INSERT INTO "departments" (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id',
+                    [data.department.trim()]
                 );
-                resolvedDeptId = newDept.rows[0]?.id ?? null;
-                resolvedDeptName = newDept.rows[0]?.name ?? null;
+                newDepartmentId = createdDept.rows[0]?.id ?? null;
             }
         }
 
-        const updateRes = await client.query<{
+        const newRole = data.role ?? currentStaff.staff_role;
+        const newStatus = data.status ?? currentStaff.status;
+
+        const updatedStaffRes = await client.query<{
             id: string;
             user_id: string;
             employee_code: string;
-            role: string;
+            staff_role: string;
             status: string;
             department_id: string | null;
             created_at: Date;
         }>(
-            `UPDATE "Staff"
-             SET employee_code = $1,
-                 role = $2,
-                 status = $3,
-                 department_id = $4
-             WHERE id = $5
-             RETURNING id, user_id, employee_code, role, status, department_id, created_at`,
-            [
-                data.employeeCode ?? current.employee_code,
-                data.role ?? current.role,
-                data.status ?? current.status,
-                resolvedDeptId,
-                staffId,
-            ]
+            `UPDATE "staff_profiles"
+             SET staff_role = $1,
+                 status = $2,
+                 department_id = $3,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = $4
+             RETURNING id, user_id, employee_code, staff_role, status, department_id, created_at`,
+            [newRole, newStatus, newDepartmentId, staffId]
         );
+        const updatedStaff = updatedStaffRes.rows[0]!;
 
-        if (data.department || data.name || data.email || resolvedDeptId) {
+        // Update Doctor if specialization changed
+        if (updatedStaff.staff_role === "DOCTOR" && data.specialization) {
             await client.query(
-                `UPDATE "Doctor"
-                 SET department_id = COALESCE($1, department_id),
-                     department = COALESCE($2, department),
-                     name = COALESCE($3, name),
-                     email = COALESCE($4, email)
-                 WHERE staff_id = $5`,
-                [
-                    resolvedDeptId,
-                    resolvedDeptName,
-                    data.name?.trim() ?? null,
-                    data.email?.toLowerCase().trim() ?? null,
-                    staffId,
-                ]
+                `UPDATE "doctors"
+                 SET specialization = $1
+                 WHERE staff_id = $2`,
+                [data.specialization, staffId]
             );
+        }
+
+        const userRes = await client.query<{
+            id: string;
+            name: string;
+            email: string;
+            role: string;
+            is_active: boolean;
+        }>(
+            'SELECT id, name, email, role, is_active FROM "users" WHERE id = $1',
+            [currentStaff.user_id]
+        );
+        const userRow = userRes.rows[0];
+
+        // Fetch department name
+        let departmentName: string | null = null;
+        if (updatedStaff.department_id) {
+            const dRes = await client.query<{ name: string }>(
+                'SELECT name FROM "departments" WHERE id = $1',
+                [updatedStaff.department_id]
+            );
+            departmentName = dRes.rows[0]?.name ?? null;
         }
 
         await client.query("COMMIT");
 
-        const row = updateRes.rows[0]!;
         return {
-            ...row,
-            employeeCode: row.employee_code,
-            userId: row.user_id,
-            departmentId: row.department_id,
-            createdAt: row.created_at,
+            id: updatedStaff.id,
+            userId: updatedStaff.user_id,
+            employeeCode: updatedStaff.employee_code,
+            role: updatedStaff.staff_role,
+            status: updatedStaff.status,
+            departmentId: updatedStaff.department_id,
+            department: departmentName,
+            createdAt: updatedStaff.created_at,
+            staff: {
+                id: updatedStaff.id,
+                userId: updatedStaff.user_id,
+                employeeCode: updatedStaff.employee_code,
+                role: updatedStaff.staff_role,
+                status: updatedStaff.status,
+                departmentId: updatedStaff.department_id,
+                department: departmentName,
+                createdAt: updatedStaff.created_at,
+            },
+            user: userRow
+                ? {
+                      id: userRow.id,
+                      name: userRow.name,
+                      email: userRow.email,
+                      role: userRow.role,
+                      isActive: userRow.is_active,
+                  }
+                : null,
         };
     } catch (error) {
         await client.query("ROLLBACK");
@@ -500,72 +560,142 @@ export async function updateStaffService(staffId: string, data: UpdateStaffInput
     }
 }
 
-export async function listStaffService() {
-    const result = await pool.query(
-        `SELECT 
-            s.id as staff_id,
+export async function listStaffService(role?: string, status?: string) {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (role) {
+        params.push(role);
+        conditions.push(`s.staff_role = $${params.length}`);
+    }
+
+    if (status) {
+        params.push(status);
+        conditions.push(`s.status = $${params.length}`);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const query = `
+        SELECT 
             s.id,
+            s.id as "staffId",
             s.user_id,
-            s.employee_code,
-            s.role as staff_role,
-            s.role,
-            s.status as staff_status,
-            s.status,
-            s.department_id,
-            s.created_at,
+            s.user_id as "userId",
             u.name,
             u.email,
-            u.is_active,
+            s.employee_code,
+            s.employee_code as "employeeCode",
+            s.staff_role as role,
+            s.staff_role as "staffRole",
+            s.status,
+            s.department_id,
+            s.department_id as "departmentId",
+            dept.name as department,
+            dept.name as "departmentName",
             d.id as doctor_id,
+            d.id as "doctorId",
             d.specialization,
-            COALESCE(dept.name, s_dept.name, d.department) as department
-         FROM "Staff" s
-         JOIN "User" u ON s.user_id = u.id
-         LEFT JOIN "Doctor" d ON d.staff_id = s.id
-         LEFT JOIN "Department" dept ON d.department_id = dept.id
-         LEFT JOIN "Department" s_dept ON s.department_id = s_dept.id
-         ORDER BY s.created_at DESC`
-    );
+            d.license_number,
+            d.license_number as "licenseNumber",
+            u.is_active,
+            u.is_active as "isActive",
+            s.created_at,
+            s.created_at as "createdAt"
+        FROM "staff_profiles" s
+        JOIN "users" u ON s.user_id = u.id
+        LEFT JOIN "departments" dept ON s.department_id = dept.id
+        LEFT JOIN "doctors" d ON d.staff_id = s.id
+        ${whereClause}
+        ORDER BY s.created_at DESC
+    `;
 
+    const result = await pool.query(query, params);
     return { staff: result.rows };
 }
 
 export async function listDoctorsService() {
-    const result = await pool.query<DoctorListRow>(
-        `SELECT 
-            d.id, 
-            COALESCE(u.name, d.name) as name, 
-            COALESCE(u.email, d.email) as email, 
-            d.specialization, 
-            COALESCE(dept.name, d.department) as department, 
-            d.created_at
-         FROM "Doctor" d
-         LEFT JOIN "Staff" s ON d.staff_id = s.id
-         LEFT JOIN "User" u ON s.user_id = u.id
-         LEFT JOIN "Department" dept ON d.department_id = dept.id
-         ORDER BY d.created_at DESC`
-    );
+    const query = `
+        SELECT 
+            d.id,
+            d.id as "doctorId",
+            d.staff_id,
+            d.staff_id as "staffId",
+            s.user_id,
+            s.user_id as "userId",
+            u.name,
+            u.email,
+            d.specialization,
+            dept.name as department,
+            d.license_number,
+            d.license_number as "licenseNumber",
+            d.consultation_minutes,
+            s.status,
+            s.employee_code,
+            s.employee_code as "employeeCode",
+            d.created_at,
+            d.created_at as "createdAt"
+        FROM "doctors" d
+        JOIN "staff_profiles" s ON d.staff_id = s.id
+        JOIN "users" u ON s.user_id = u.id
+        LEFT JOIN "departments" dept ON s.department_id = dept.id
+        ORDER BY d.created_at DESC
+    `;
 
+    const result = await pool.query(query);
     return { doctors: result.rows };
 }
 
-export async function listPatientsService() {
-    const result = await pool.query(
-        `SELECT
+export async function getAdminDashboardService() {
+    const [staffCountRes, activeVisitsRes, pendingInvoicesRes] = await Promise.all([
+        pool.query(`
+            SELECT staff_role as role, count(*)::int as count
+            FROM "staff_profiles"
+            GROUP BY staff_role
+        `),
+        pool.query(`
+            SELECT count(*)::int as count
+            FROM "visits"
+            WHERE status NOT IN ('COMPLETED', 'CANCELLED')
+              AND checked_in_at >= CURRENT_DATE
+        `),
+        pool.query(`
+            SELECT count(*)::int as count
+            FROM "invoices"
+            WHERE status = 'PENDING'
+        `),
+    ]);
+
+    const staffByRole: Record<string, number> = {};
+    for (const row of staffCountRes.rows) {
+        staffByRole[row.role] = row.count;
+    }
+
+    return {
+        staffCountByRole: staffByRole,
+        activeVisitsToday: activeVisitsRes.rows[0]?.count ?? 0,
+        pendingInvoicesCount: pendingInvoicesRes.rows[0]?.count ?? 0,
+    };
+}
+
+export async function listPatientsAdminService() {
+    const result = await pool.query(`
+        SELECT 
             p.id,
-            p.owner_user_id,
+            p.user_id,
             p.name,
-            p.age,
+            EXTRACT(YEAR FROM age(p.date_of_birth))::int as age,
             p.gender,
-            p.patient_type,
-            p.doctor_id,
+            p.phone,
+            p.address,
             p.created_at,
-            u.email as owner_email
-         FROM "Patient" p
-         LEFT JOIN "User" u ON p.owner_user_id = u.id
-         ORDER BY p.created_at DESC`
-    );
+            u.email
+        FROM "patient_profiles" p
+        LEFT JOIN "users" u ON p.user_id = u.id
+        ORDER BY p.created_at DESC
+    `);
 
     return { patients: result.rows };
 }
 
+export const listPatientsService = listPatientsAdminService;

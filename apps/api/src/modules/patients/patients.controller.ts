@@ -51,8 +51,16 @@ export async function listMyPatients(request: Request, response: Response) {
     if (isStaff) {
         const pool = (await import("#database/pool.js")).default;
         const res = await pool.query(
-            `SELECT id, owner_user_id, name, age, gender, patient_type, created_at
-             FROM "Patient"
+            `SELECT 
+                id, 
+                owner_user_id, 
+                owner_user_id as user_id,
+                name, 
+                EXTRACT(YEAR FROM age(date_of_birth))::int as age, 
+                gender, 
+                'Walkin' as patient_type, 
+                created_at
+             FROM "patient_profiles"
              ORDER BY created_at DESC`
         );
         response.status(200).json({ patients: res.rows });

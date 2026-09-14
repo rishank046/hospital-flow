@@ -2,29 +2,16 @@ import pool from "#database/pool.js";
 import { AppError } from "#utils/errorHandler.js";
 import { loginService } from "#modules/auth/auth.service.js";
 import type {
-    CreateConsultationInput,
-    CreateInvestigationOrderInput,
     DoctorLoginInput,
-    UpdateConsultationInput,
     UpdateDoctorProfileInput,
 } from "./doctor.schema.js";
-
-interface DoctorRow {
-    id: string;
-    name?: string | null;
-    email?: string | null;
-    password?: string | null;
-    specialization: string;
-    department?: string | null;
-    created_at: Date;
-}
 
 export async function resolveDoctorId(userIdOrDoctorId: string): Promise<string> {
     // 1. Check if matches Staff -> Doctor
     const staffDocRes = await pool.query<{ id: string }>(
         `SELECT d.id 
-         FROM "Doctor" d
-         JOIN "Staff" s ON d.staff_id = s.id
+         FROM "doctors" d
+         JOIN "staff_profiles" s ON d.staff_id = s.id
          WHERE s.user_id = $1`,
         [userIdOrDoctorId]
     );
@@ -33,9 +20,9 @@ export async function resolveDoctorId(userIdOrDoctorId: string): Promise<string>
         return staffDocRes.rows[0].id;
     }
 
-    // 2. Direct match on Doctor id (for legacy/test setups)
+    // 2. Direct match on Doctor id
     const directDocRes = await pool.query<{ id: string }>(
-        'SELECT id FROM "Doctor" WHERE id = $1',
+        'SELECT id FROM "doctors" WHERE id = $1',
         [userIdOrDoctorId]
     );
 
@@ -50,21 +37,21 @@ export async function doctorLoginService(data: DoctorLoginInput) {
     return loginService(data.email, data.password);
 }
 
-
 export async function listPublicDoctorsService() {
     const result = await pool.query(
         `SELECT 
             d.id, 
-            COALESCE(u.name, d.name) as name, 
-            COALESCE(u.email, d.email) as email, 
+            u.name, 
+            u.email, 
             d.specialization, 
-            COALESCE(dept.name, d.department) as department, 
+            dept.name as department, 
             d.license_number,
+            d.consultation_minutes,
             d.created_at
-         FROM "Doctor" d
-         LEFT JOIN "Staff" s ON d.staff_id = s.id
-         LEFT JOIN "User" u ON s.user_id = u.id
-         LEFT JOIN "Department" dept ON d.department_id = dept.id
+         FROM "doctors" d
+         JOIN "staff_profiles" s ON d.staff_id = s.id
+         JOIN "users" u ON s.user_id = u.id
+         LEFT JOIN "departments" dept ON s.department_id = dept.id
          ORDER BY d.created_at DESC`
     );
 
@@ -75,17 +62,18 @@ export async function getDoctorProfileService(doctorId: string) {
     const result = await pool.query(
         `SELECT 
             d.id, 
-            COALESCE(u.name, d.name) as name, 
-            COALESCE(u.email, d.email) as email, 
+            u.name, 
+            u.email, 
             d.specialization, 
-            COALESCE(dept.name, d.department) as department, 
+            dept.name as department, 
             d.license_number,
             d.staff_id,
+            d.consultation_minutes,
             d.created_at
-         FROM "Doctor" d
-         LEFT JOIN "Staff" s ON d.staff_id = s.id
-         LEFT JOIN "User" u ON s.user_id = u.id
-         LEFT JOIN "Department" dept ON d.department_id = dept.id
+         FROM "doctors" d
+         JOIN "staff_profiles" s ON d.staff_id = s.id
+         JOIN "users" u ON s.user_id = u.id
+         LEFT JOIN "departments" dept ON s.department_id = dept.id
          WHERE d.id = $1`,
         [doctorId]
     );
@@ -102,9 +90,9 @@ export async function updateDoctorProfileService(
     data: UpdateDoctorProfileInput
 ) {
     const existing = await pool.query(
-        `SELECT d.id, d.staff_id, d.specialization, d.department, s.user_id 
-         FROM "Doctor" d
-         LEFT JOIN "Staff" s ON d.staff_id = s.id
+        `SELECT d.id, d.staff_id, d.specialization, s.user_id, s.department_id 
+         FROM "doctors" d
+         JOIN "staff_profiles" s ON d.staff_id = s.id
          WHERE d.id = $1`,
         [doctorId]
     );
@@ -115,28 +103,45 @@ export async function updateDoctorProfileService(
 
     const current = existing.rows[0];
 
-    // If name is provided and user is linked, update User table
+    // If name is provided and user is linked, update users table
     if (data.name && current.user_id) {
-        await pool.query('UPDATE "User" SET name = $1 WHERE id = $2', [
+        await pool.query('UPDATE "users" SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [
             data.name,
             current.user_id,
         ]);
     }
 
-    // Update Doctor table
-    await pool.query(
-        `UPDATE "Doctor"
-         SET name = COALESCE($1, name),
-             specialization = COALESCE($2, specialization),
-             department = COALESCE($3, department)
-         WHERE id = $4`,
-        [
-            data.name ?? null,
-            data.specialization ?? null,
-            data.department ?? null,
-            doctorId,
-        ]
-    );
+    // Update doctors specialization
+    if (data.specialization) {
+        await pool.query(
+            `UPDATE "doctors"
+             SET specialization = $1
+             WHERE id = $2`,
+            [data.specialization, doctorId]
+        );
+    }
+
+    // If department is provided, update staff_profiles.department_id
+    if (data.department) {
+        const deptRes = await pool.query<{ id: string }>(
+            'SELECT id FROM "departments" WHERE name ILIKE $1',
+            [data.department.trim()]
+        );
+        let deptId = deptRes.rows[0]?.id;
+        if (!deptId) {
+            const newDept = await pool.query<{ id: string }>(
+                'INSERT INTO "departments" (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id',
+                [data.department.trim()]
+            );
+            deptId = newDept.rows[0]?.id;
+        }
+        if (deptId && current.staff_id) {
+            await pool.query(
+                'UPDATE "staff_profiles" SET department_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+                [deptId, current.staff_id]
+            );
+        }
+    }
 
     return getDoctorProfileService(doctorId);
 }
@@ -147,14 +152,16 @@ export async function getDoctorScheduleService(doctorId: string) {
             a.id,
             a.start_time,
             a.end_time,
+            a.type,
+            a.status,
             a.created_at,
             p.id as patient_id,
             p.name as patient_name,
-            p.age as patient_age,
+            EXTRACT(YEAR FROM age(p.date_of_birth))::int as patient_age,
             p.gender as patient_gender,
-            p.patient_type
-         FROM "Appointment" a
-         JOIN "Patient" p ON a.patient_id = p.id
+            'Online' as patient_type
+         FROM "appointments" a
+         JOIN "patient_profiles" p ON a.patient_id = p.id
          WHERE a.doctor_id = $1
          ORDER BY a.start_time ASC`,
         [doctorId]
@@ -168,16 +175,17 @@ export async function getDoctorPatientsService(doctorId: string) {
         `SELECT DISTINCT ON (p.id)
             p.id,
             p.name,
-            p.age,
+            EXTRACT(YEAR FROM age(p.date_of_birth))::int as age,
             p.gender,
-            p.patient_type,
+            'Online' as patient_type,
             p.created_at,
             u.email as owner_email
-         FROM "Patient" p
-         LEFT JOIN "User" u ON p.owner_user_id = u.id
-         LEFT JOIN "Appointment" a ON a.patient_id = p.id
-         LEFT JOIN "Consultation" c ON c.patient_id = p.id
-         WHERE p.doctor_id = $1 OR a.doctor_id = $1 OR c.doctor_id = $1
+         FROM "patient_profiles" p
+         LEFT JOIN "users" u ON p.user_id = u.id
+         LEFT JOIN "appointments" a ON a.patient_id = p.id
+         LEFT JOIN "visits" v ON v.patient_id = p.id
+         LEFT JOIN "consultations" c ON c.visit_id = v.id
+         WHERE a.doctor_id = $1 OR v.assigned_doctor_id = $1 OR c.doctor_id = $1
          ORDER BY p.id, p.created_at DESC`,
         [doctorId]
     );
@@ -190,14 +198,13 @@ export async function getDoctorPatientDetailsService(doctorId: string, patientId
         `SELECT 
             p.id,
             p.name,
-            p.age,
+            EXTRACT(YEAR FROM age(p.date_of_birth))::int as age,
             p.gender,
-            p.patient_type,
+            'Online' as patient_type,
             p.created_at,
-            p.doctor_id,
             u.email as owner_email
-         FROM "Patient" p
-         LEFT JOIN "User" u ON p.owner_user_id = u.id
+         FROM "patient_profiles" p
+         LEFT JOIN "users" u ON p.user_id = u.id
          WHERE p.id = $1`,
         [patientId]
     );
@@ -209,34 +216,37 @@ export async function getDoctorPatientDetailsService(doctorId: string, patientId
     const patient = patientRes.rows[0];
 
     const appointmentsRes = await pool.query(
-        `SELECT id, start_time, end_time, created_at
-         FROM "Appointment"
+        `SELECT id, start_time, end_time, type, status, created_at
+         FROM "appointments"
          WHERE patient_id = $1 AND doctor_id = $2
          ORDER BY start_time DESC`,
         [patientId, doctorId]
     );
 
     const consultationsRes = await pool.query(
-        `SELECT id, diagnosis, notes, treatment_plan, created_at, updated_at
-         FROM "Consultation"
-         WHERE patient_id = $1 AND doctor_id = $2
-         ORDER BY created_at DESC`,
+        `SELECT c.id, c.diagnosis, c.notes, c.treatment_plan, c.created_at, c.updated_at
+         FROM "consultations" c
+         JOIN "visits" v ON c.visit_id = v.id
+         WHERE v.patient_id = $1 AND c.doctor_id = $2
+         ORDER BY c.created_at DESC`,
         [patientId, doctorId]
     );
 
     const prescriptionsRes = await pool.query(
-        `SELECT id, consultation_id, medication, dosage, frequency, duration, instructions, created_at
-         FROM "Prescription"
-         WHERE patient_id = $1 AND doctor_id = $2
-         ORDER BY created_at DESC`,
+        `SELECT pr.id, pr.consultation_id, pr.medication, pr.dosage, pr.frequency, pr.duration, pr.instructions, pr.status, pr.created_at
+         FROM "prescriptions" pr
+         JOIN "visits" v ON pr.visit_id = v.id
+         WHERE v.patient_id = $1 AND pr.doctor_id = $2
+         ORDER BY pr.created_at DESC`,
         [patientId, doctorId]
     );
 
     const reportsRes = await pool.query(
-        `SELECT id, test_name, instructions, status, result, created_at, updated_at
-         FROM "InvestigationOrder"
-         WHERE patient_id = $1 AND doctor_id = $2
-         ORDER BY created_at DESC`,
+        `SELECT io.id, io.test_name, io.instructions, io.status, io.result, io.created_at, io.updated_at
+         FROM "investigation_orders" io
+         JOIN "visits" v ON io.visit_id = v.id
+         WHERE v.patient_id = $1 AND io.doctor_id = $2
+         ORDER BY io.created_at DESC`,
         [patientId, doctorId]
     );
 
@@ -255,6 +265,7 @@ export {
 } from "#modules/consultations/consultations.service.js";
 
 export {
-    createInvestigationOrderService,
+    createLabOrderService as createInvestigationOrderService,
+    createLabOrderService,
     getPatientReportsService,
 } from "#modules/lab-orders/lab-orders.service.js";

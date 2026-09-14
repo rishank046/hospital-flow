@@ -40,6 +40,7 @@ describe("Queue Ordering and Doctor Call-Next Mechanics", () => {
     let entrySkippedId: string; // priority 10, status SKIPPED
     let entryCompletedId: string; // priority 10, status COMPLETED
     let entryDocBId: string; // Doctor B's entry
+    const createdVisitIds: string[] = [];
 
     beforeAll(async () => {
         // 1. Start ephemeral HTTP server
@@ -58,7 +59,7 @@ describe("Queue Ordering and Doctor Call-Next Mechanics", () => {
 
         // 2. Seed Doctor A (User -> Staff -> Doctor)
         const docUserRes = await pool.query(
-            `INSERT INTO "User" (name, email, password, role)
+            `INSERT INTO "users" (name, email, password, role)
              VALUES ($1, $2, $3, 'STAFF')
              RETURNING id`,
             ["Dr. Queue Primary", doctorEmail, hashedPassword]
@@ -66,7 +67,7 @@ describe("Queue Ordering and Doctor Call-Next Mechanics", () => {
         doctorUserId = docUserRes.rows[0].id;
 
         const docStaffRes = await pool.query(
-            `INSERT INTO "Staff" (user_id, employee_code, role, status)
+            `INSERT INTO "staff_profiles" (user_id, employee_code, staff_role, status)
              VALUES ($1, $2, 'DOCTOR', 'ACTIVE')
              RETURNING id`,
             [doctorUserId, `DOC-Q-${testTag}`]
@@ -74,10 +75,10 @@ describe("Queue Ordering and Doctor Call-Next Mechanics", () => {
         doctorStaffId = docStaffRes.rows[0].id;
 
         const docRes = await pool.query(
-            `INSERT INTO "Doctor" (staff_id, specialization, department, name, email)
-             VALUES ($1, 'Cardiology', 'Cardiology', 'Dr. Queue Primary', $2)
+            `INSERT INTO "doctors" (staff_id, specialization, license_number)
+             VALUES ($1, 'Cardiology', $2)
              RETURNING id`,
-            [doctorStaffId, doctorEmail]
+            [doctorStaffId, `LIC-Q-${testTag}`]
         );
         doctorId = docRes.rows[0].id;
 
@@ -89,7 +90,7 @@ describe("Queue Ordering and Doctor Call-Next Mechanics", () => {
 
         // 3. Seed Doctor B (for queue isolation check)
         const docBUserRes = await pool.query(
-            `INSERT INTO "User" (name, email, password, role)
+            `INSERT INTO "users" (name, email, password, role)
              VALUES ($1, $2, $3, 'STAFF')
              RETURNING id`,
             ["Dr. Queue Secondary", doctorBEmail, hashedPassword]
@@ -97,7 +98,7 @@ describe("Queue Ordering and Doctor Call-Next Mechanics", () => {
         doctorBUserId = docBUserRes.rows[0].id;
 
         const docBStaffRes = await pool.query(
-            `INSERT INTO "Staff" (user_id, employee_code, role, status)
+            `INSERT INTO "staff_profiles" (user_id, employee_code, staff_role, status)
              VALUES ($1, $2, 'DOCTOR', 'ACTIVE')
              RETURNING id`,
             [doctorBUserId, `DOC-QB-${testTag}`]
@@ -105,10 +106,10 @@ describe("Queue Ordering and Doctor Call-Next Mechanics", () => {
         doctorBStaffId = docBStaffRes.rows[0].id;
 
         const docBRes = await pool.query(
-            `INSERT INTO "Doctor" (staff_id, specialization, department, name, email)
-             VALUES ($1, 'Pediatrics', 'Pediatrics', 'Dr. Queue Secondary', $2)
+            `INSERT INTO "doctors" (staff_id, specialization, license_number)
+             VALUES ($1, 'Pediatrics', $2)
              RETURNING id`,
-            [doctorBStaffId, doctorBEmail]
+            [doctorBStaffId, `LIC-QB-${testTag}`]
         );
         doctorBId = docBRes.rows[0].id;
 
@@ -120,14 +121,14 @@ describe("Queue Ordering and Doctor Call-Next Mechanics", () => {
 
         // 4. Seed Patients
         const patRes = await pool.query(
-            `INSERT INTO "Patient" (name, age, gender, patient_type)
+            `INSERT INTO "patient_profiles" (name, date_of_birth, gender)
              VALUES 
-                ('Patient One (P0, T1)', 30, 'Male', 'Walkin'),
-                ('Patient Two (P0, T2)', 40, 'Female', 'Walkin'),
-                ('Patient Three (P5, T3)', 50, 'Other', 'Walkin'),
-                ('Patient Skipped (P10)', 60, 'Male', 'Walkin'),
-                ('Patient Completed (P10)', 70, 'Female', 'Walkin'),
-                ('Patient DocB', 25, 'Male', 'Walkin')
+                ('Patient One (P0, T1)', '1994-01-01', 'Male'),
+                ('Patient Two (P0, T2)', '1984-01-01', 'Female'),
+                ('Patient Three (P5, T3)', '1974-01-01', 'Other'),
+                ('Patient Skipped (P10)', '1964-01-01', 'Male'),
+                ('Patient Completed (P10)', '1954-01-01', 'Female'),
+                ('Patient DocB', '1999-01-01', 'Male')
              RETURNING id, name`
         );
         patient1Id = patRes.rows[0].id;
@@ -137,61 +138,101 @@ describe("Queue Ordering and Doctor Call-Next Mechanics", () => {
         patientCompletedId = patRes.rows[4].id;
         patientDocBId = patRes.rows[5].id;
 
-        // 5. Seed Queue Entries with staggered timestamps and priorities:
-        // T1 = 30 mins ago, T2 = 20 mins ago, T3 = 10 mins ago
-        // Entry 1: priority 0, joined_at = NOW() - INTERVAL '30 minutes', status = 'WAITING'
-        const q1 = await pool.query(
-            `INSERT INTO "QueueEntry" (patient_id, doctor_id, priority, status, joined_at, type)
-             VALUES ($1, $2, 0, 'WAITING', NOW() - INTERVAL '30 minutes', 'WALK_IN')
-             RETURNING id`,
+        // Seed visits
+        const v1 = await pool.query(
+            `INSERT INTO "visits" (patient_id, visit_type, status, assigned_doctor_id)
+             VALUES ($1, 'WALKIN', 'WAITING_OPD', $2) RETURNING id`,
             [patient1Id, doctorId]
+        );
+        const visit1Id = v1.rows[0].id;
+        createdVisitIds.push(visit1Id);
+
+        const v2 = await pool.query(
+            `INSERT INTO "visits" (patient_id, visit_type, status, assigned_doctor_id)
+             VALUES ($1, 'WALKIN', 'WAITING_OPD', $2) RETURNING id`,
+            [patient2Id, doctorId]
+        );
+        const visit2Id = v2.rows[0].id;
+        createdVisitIds.push(visit2Id);
+
+        const v3 = await pool.query(
+            `INSERT INTO "visits" (patient_id, visit_type, status, assigned_doctor_id)
+             VALUES ($1, 'WALKIN', 'WAITING_OPD', $2) RETURNING id`,
+            [patient3Id, doctorId]
+        );
+        const visit3Id = v3.rows[0].id;
+        createdVisitIds.push(visit3Id);
+
+        const vSkip = await pool.query(
+            `INSERT INTO "visits" (patient_id, visit_type, status, assigned_doctor_id)
+             VALUES ($1, 'WALKIN', 'WAITING_OPD', $2) RETURNING id`,
+            [patientSkippedId, doctorId]
+        );
+        const visitSkippedId = vSkip.rows[0].id;
+        createdVisitIds.push(visitSkippedId);
+
+        const vComp = await pool.query(
+            `INSERT INTO "visits" (patient_id, visit_type, status, assigned_doctor_id)
+             VALUES ($1, 'WALKIN', 'COMPLETED', $2) RETURNING id`,
+            [patientCompletedId, doctorId]
+        );
+        const visitCompletedId = vComp.rows[0].id;
+        createdVisitIds.push(visitCompletedId);
+
+        const vB = await pool.query(
+            `INSERT INTO "visits" (patient_id, visit_type, status, assigned_doctor_id)
+             VALUES ($1, 'WALKIN', 'WAITING_OPD', $2) RETURNING id`,
+            [patientDocBId, doctorBId]
+        );
+        const visitDocBId = vB.rows[0].id;
+        createdVisitIds.push(visitDocBId);
+
+        // 5. Seed Queue Entries
+        const q1 = await pool.query(
+            `INSERT INTO "queue_entries" (visit_id, doctor_id, priority, status, joined_at, queue_type)
+             VALUES ($1, $2, 0, 'WAITING', NOW() - INTERVAL '30 minutes', 'WALKIN')
+             RETURNING id`,
+            [visit1Id, doctorId]
         );
         entry1Id = q1.rows[0].id;
 
-        // Entry 2: priority 0, joined_at = NOW() - INTERVAL '20 minutes', status = 'WAITING'
         const q2 = await pool.query(
-            `INSERT INTO "QueueEntry" (patient_id, doctor_id, priority, status, joined_at, type)
-             VALUES ($1, $2, 0, 'WAITING', NOW() - INTERVAL '20 minutes', 'WALK_IN')
+            `INSERT INTO "queue_entries" (visit_id, doctor_id, priority, status, joined_at, queue_type)
+             VALUES ($1, $2, 0, 'WAITING', NOW() - INTERVAL '20 minutes', 'WALKIN')
              RETURNING id`,
-            [patient2Id, doctorId]
+            [visit2Id, doctorId]
         );
         entry2Id = q2.rows[0].id;
 
-        // Entry 3: priority 5, joined_at = NOW() - INTERVAL '10 minutes', status = 'WAITING'
-        // Joined LATER than Entry 1 and 2, but has priority 5 > 0
         const q3 = await pool.query(
-            `INSERT INTO "QueueEntry" (patient_id, doctor_id, priority, status, joined_at, type)
-             VALUES ($1, $2, 5, 'WAITING', NOW() - INTERVAL '10 minutes', 'WALK_IN')
+            `INSERT INTO "queue_entries" (visit_id, doctor_id, priority, status, joined_at, queue_type)
+             VALUES ($1, $2, 5, 'WAITING', NOW() - INTERVAL '10 minutes', 'WALKIN')
              RETURNING id`,
-            [patient3Id, doctorId]
+            [visit3Id, doctorId]
         );
         entry3Id = q3.rows[0].id;
 
-        // Non-waiting entries for Doctor A to verify skipping
-        // Entry Skipped: priority 10, status 'SKIPPED'
         const qSkip = await pool.query(
-            `INSERT INTO "QueueEntry" (patient_id, doctor_id, priority, status, joined_at, type)
-             VALUES ($1, $2, 10, 'SKIPPED', NOW() - INTERVAL '40 minutes', 'WALK_IN')
+            `INSERT INTO "queue_entries" (visit_id, doctor_id, priority, status, joined_at, queue_type)
+             VALUES ($1, $2, 10, 'SKIPPED', NOW() - INTERVAL '40 minutes', 'WALKIN')
              RETURNING id`,
-            [patientSkippedId, doctorId]
+            [visitSkippedId, doctorId]
         );
         entrySkippedId = qSkip.rows[0].id;
 
-        // Entry Completed: priority 10, status 'COMPLETED'
         const qComp = await pool.query(
-            `INSERT INTO "QueueEntry" (patient_id, doctor_id, priority, status, joined_at, type)
-             VALUES ($1, $2, 10, 'COMPLETED', NOW() - INTERVAL '50 minutes', 'WALK_IN')
+            `INSERT INTO "queue_entries" (visit_id, doctor_id, priority, status, joined_at, queue_type)
+             VALUES ($1, $2, 10, 'COMPLETED', NOW() - INTERVAL '50 minutes', 'WALKIN')
              RETURNING id`,
-            [patientCompletedId, doctorId]
+            [visitCompletedId, doctorId]
         );
         entryCompletedId = qComp.rows[0].id;
 
-        // Doctor B's queue entry
         const qB = await pool.query(
-            `INSERT INTO "QueueEntry" (patient_id, doctor_id, priority, status, joined_at, type)
-             VALUES ($1, $2, 1, 'WAITING', NOW() - INTERVAL '15 minutes', 'WALK_IN')
+            `INSERT INTO "queue_entries" (visit_id, doctor_id, priority, status, joined_at, queue_type)
+             VALUES ($1, $2, 1, 'WAITING', NOW() - INTERVAL '15 minutes', 'WALKIN')
              RETURNING id`,
-            [patientDocBId, doctorBId]
+            [visitDocBId, doctorBId]
         );
         entryDocBId = qB.rows[0].id;
     });
@@ -200,20 +241,25 @@ describe("Queue Ordering and Doctor Call-Next Mechanics", () => {
         // Clean up queue entries
         const entryIds = [entry1Id, entry2Id, entry3Id, entrySkippedId, entryCompletedId, entryDocBId].filter(Boolean);
         if (entryIds.length > 0) {
-            await pool.query('DELETE FROM "QueueEntry" WHERE id = ANY($1)', [entryIds]);
+            await pool.query('DELETE FROM "queue_entries" WHERE id = ANY($1)', [entryIds]);
+        }
+
+        // Clean up visits
+        if (createdVisitIds.length > 0) {
+            await pool.query('DELETE FROM "visits" WHERE id = ANY($1)', [createdVisitIds]);
         }
 
         // Clean up patients
         const patIds = [patient1Id, patient2Id, patient3Id, patientSkippedId, patientCompletedId, patientDocBId].filter(Boolean);
         if (patIds.length > 0) {
-            await pool.query('DELETE FROM "Patient" WHERE id = ANY($1)', [patIds]);
+            await pool.query('DELETE FROM "patient_profiles" WHERE id = ANY($1)', [patIds]);
         }
 
         // Clean up doctors & staff & users
         const emails = [doctorEmail, doctorBEmail];
-        await pool.query('DELETE FROM "Doctor" WHERE email = ANY($1)', [emails]);
-        await pool.query('DELETE FROM "Staff" WHERE user_id IN (SELECT id FROM "User" WHERE email = ANY($1))', [emails]);
-        await pool.query('DELETE FROM "User" WHERE email = ANY($1)', [emails]);
+        await pool.query('DELETE FROM "doctors" WHERE staff_id IN (SELECT id FROM "staff_profiles" WHERE user_id IN (SELECT id FROM "users" WHERE email = ANY($1)))', [emails]);
+        await pool.query('DELETE FROM "staff_profiles" WHERE user_id IN (SELECT id FROM "users" WHERE email = ANY($1))', [emails]);
+        await pool.query('DELETE FROM "users" WHERE email = ANY($1)', [emails]);
 
         if (server) {
             await new Promise<void>((resolve) => server.close(() => resolve()));

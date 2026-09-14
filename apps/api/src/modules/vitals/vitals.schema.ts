@@ -2,16 +2,21 @@ import { z } from "zod";
 
 export const recordVitalsSchema = z.object({
     temperature: z.number().optional().nullable(),
+    temperature_c: z.number().optional().nullable(),
     heartRate: z.number().int().optional().nullable(),
     heart_rate: z.number().int().optional().nullable(),
+    pulse_bpm: z.number().int().optional().nullable(),
     bloodPressure: z.string().optional().nullable(),
     blood_pressure: z.string().optional().nullable(),
     respiratoryRate: z.number().int().optional().nullable(),
     respiratory_rate: z.number().int().optional().nullable(),
     oxygenSaturation: z.number().optional().nullable(),
     oxygen_saturation: z.number().optional().nullable(),
+    spo2_percent: z.number().optional().nullable(),
     weight: z.number().optional().nullable(),
+    weight_kg: z.number().optional().nullable(),
     height: z.number().optional().nullable(),
+    height_cm: z.number().optional().nullable(),
     notes: z.string().optional().nullable(),
 });
 

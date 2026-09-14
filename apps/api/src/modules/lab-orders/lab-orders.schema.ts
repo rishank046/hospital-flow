@@ -27,6 +27,8 @@ export const updateLabOrderSchema = z.object({
     status: labOrderStatusEnum.optional(),
     result: z.string().optional().nullable(),
     instructions: z.string().optional().nullable(),
+    performedBy: z.string().uuid().optional().nullable(),
+    performed_by: z.string().uuid().optional().nullable(),
 });
 
 export const labOrderIdParamSchema = z.object({

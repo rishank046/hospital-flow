@@ -7,13 +7,18 @@ import { Spinner } from '../../components/common/Spinner';
 import { Alert } from '../../components/common/Alert';
 import { staffService } from '../../services/staff.service';
 import type { StaffProfile } from '../../types/staff.types';
+import type { StaffRole } from '../../types/auth.types';
 import { ReceptionistPanel } from './ReceptionistPanel';
 import { NursePanel } from './NursePanel';
 import { PharmacistPanel } from './PharmacistPanel';
 import { LabTechPanel } from './LabTechPanel';
 import { BillingClerkPanel } from './BillingClerkPanel';
 
-export function StaffDashboardPage() {
+interface StaffDashboardPageProps {
+  roleOverride?: StaffRole;
+}
+
+export function StaffDashboardPage({ roleOverride }: StaffDashboardPageProps = {}) {
   const { user, staffRole } = useAuth();
   const [profile, setProfile] = useState<StaffProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -21,11 +26,11 @@ export function StaffDashboardPage() {
 
   // Safeguard: DOCTOR staffRole must never be routed to the general staff portal
   useEffect(() => {
-    if (staffRole === 'DOCTOR' || user?.staffRole === 'DOCTOR') {
-      window.history.replaceState({}, '', '/doctor/dashboard');
+    if ((staffRole === 'DOCTOR' || user?.staffRole === 'DOCTOR') && !roleOverride) {
+      window.history.replaceState({}, '', '/staff/doctor/dashboard');
       window.dispatchEvent(new PopStateEvent('popstate'));
     }
-  }, [staffRole, user?.staffRole]);
+  }, [staffRole, user?.staffRole, roleOverride]);
 
   const loadProfile = async () => {
     setLoading(true);
@@ -62,13 +67,14 @@ export function StaffDashboardPage() {
     };
   }, []);
 
-  const effectiveStaffRole = (profile?.staff_role || user?.staffRole || 'RECEPTIONIST').toUpperCase();
+  const effectiveStaffRole = (roleOverride || profile?.staff_role || user?.staffRole || 'OPD_MANAGER').toUpperCase();
   const employeeCode = profile?.employee_code || user?.employeeCode || 'STAFF-ID';
   const department = profile?.department || user?.department || 'Clinical Operations';
   const staffName = profile?.name || user?.name || 'Staff Member';
 
   const renderRolePanel = () => {
     switch (effectiveStaffRole) {
+      case 'OPD_MANAGER':
       case 'RECEPTIONIST':
         return <ReceptionistPanel />;
       case 'NURSE':
@@ -87,6 +93,8 @@ export function StaffDashboardPage() {
 
   const getRoleBadgeVariant = (role: string) => {
     switch (role) {
+      case 'OPD_MANAGER':
+        return 'primary';
       case 'NURSE':
         return 'primary';
       case 'PHARMACIST':
@@ -96,6 +104,8 @@ export function StaffDashboardPage() {
         return 'warning';
       case 'RECEPTIONIST':
         return 'primary';
+      case 'BILLING_CLERK':
+        return 'success';
       default:
         return 'neutral';
     }

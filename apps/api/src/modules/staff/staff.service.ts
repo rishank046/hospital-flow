@@ -7,8 +7,10 @@ export async function getStaffProfileService(userId: string) {
             s.id as staff_id,
             s.user_id,
             s.employee_code,
-            s.role as staff_role,
+            s.staff_role as role,
+            s.staff_role,
             s.status as staff_status,
+            s.status,
             s.created_at,
             u.name,
             u.email,
@@ -16,11 +18,11 @@ export async function getStaffProfileService(userId: string) {
             d.id as doctor_id,
             d.specialization,
             d.license_number,
-            COALESCE(dept.name, d.department) as department
-         FROM "Staff" s
-         JOIN "User" u ON s.user_id = u.id
-         LEFT JOIN "Doctor" d ON d.staff_id = s.id
-         LEFT JOIN "Department" dept ON d.department_id = dept.id
+            dept.name as department
+         FROM "staff_profiles" s
+         JOIN "users" u ON s.user_id = u.id
+         LEFT JOIN "doctors" d ON d.staff_id = s.id
+         LEFT JOIN "departments" dept ON s.department_id = dept.id
          WHERE s.user_id = $1`,
         [userId]
     );
@@ -38,8 +40,10 @@ export async function getStaffByIdService(staffId: string) {
             s.id as staff_id,
             s.user_id,
             s.employee_code,
-            s.role as staff_role,
+            s.staff_role as role,
+            s.staff_role,
             s.status as staff_status,
+            s.status,
             s.created_at,
             u.name,
             u.email,
@@ -47,11 +51,11 @@ export async function getStaffByIdService(staffId: string) {
             d.id as doctor_id,
             d.specialization,
             d.license_number,
-            COALESCE(dept.name, d.department) as department
-         FROM "Staff" s
-         JOIN "User" u ON s.user_id = u.id
-         LEFT JOIN "Doctor" d ON d.staff_id = s.id
-         LEFT JOIN "Department" dept ON d.department_id = dept.id
+            dept.name as department
+         FROM "staff_profiles" s
+         JOIN "users" u ON s.user_id = u.id
+         LEFT JOIN "doctors" d ON d.staff_id = s.id
+         LEFT JOIN "departments" dept ON s.department_id = dept.id
          WHERE s.id = $1`,
         [staffId]
     );
@@ -69,4 +73,3 @@ export {
     updateStaffStatusService,
     listStaffService,
 } from "#modules/admin/admin.service.js";
-

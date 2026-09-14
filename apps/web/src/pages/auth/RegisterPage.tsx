@@ -36,14 +36,20 @@ export function RegisterPage() {
         password,
       });
 
-      login(response.token, 'PATIENT', {
-        id: response.user?.id,
+      const token = response.data?.token || response.token;
+      const user = response.data?.user || response.user;
+      if (!token) {
+        throw new Error('Registration did not return a valid session token.');
+      }
+
+      login(token, {
+        id: user?.id || '',
         name: name.trim(),
         email: email.trim(),
-        role: 'PATIENT',
+        role: 'USER',
       });
 
-      window.history.pushState({}, '', '/patient/dashboard');
+      window.history.pushState({}, '', '/user');
       window.dispatchEvent(new PopStateEvent('popstate'));
     } catch (err) {
       setError(

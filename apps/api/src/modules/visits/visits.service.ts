@@ -41,13 +41,15 @@ export interface FormattedVisit {
     registered_by: string | null;
     registeredBy: string | null;
     status: VisitStatus;
+    checked_in_at?: Date;
+    completed_at?: Date | null;
     created_at: Date;
     createdAt: Date;
     updated_at: Date;
     updatedAt: Date;
 }
 
-export function formatVisit(row: any): FormattedVisit {
+export function formatVisit(row: any, registeredByUserId?: string | null): FormattedVisit {
     return {
         id: row.id,
         patient_id: row.patient_id,
@@ -64,8 +66,10 @@ export function formatVisit(row: any): FormattedVisit {
         assignedDoctorId: row.assigned_doctor_id ?? null,
         doctor_name: row.doctor_name ?? null,
         registered_by: row.registered_by ?? null,
-        registeredBy: row.registered_by ?? null,
+        registeredBy: registeredByUserId !== undefined ? (registeredByUserId ?? row.registered_by ?? null) : (row.registered_by ?? null),
         status: row.status as VisitStatus,
+        checked_in_at: row.checked_in_at,
+        completed_at: row.completed_at ?? null,
         created_at: row.created_at,
         createdAt: row.created_at,
         updated_at: row.updated_at,
@@ -85,8 +89,8 @@ export async function createVisitService(
     }
 
     // Verify patient exists
-    const patientRes = await pool.query<{ id: string; owner_user_id: string }>(
-        'SELECT id, owner_user_id FROM "Patient" WHERE id = $1',
+    const patientRes = await pool.query<{ id: string; user_id: string }>(
+        'SELECT id, owner_user_id as user_id FROM "patient_profiles" WHERE id = $1',
         [data.patientId]
     );
 
@@ -97,11 +101,32 @@ export async function createVisitService(
     const patient = patientRes.rows[0];
 
     // If patient, ensure they own the patient record
-    if (isPatient && patient.owner_user_id !== authUser.userId) {
+    if (isPatient && patient.user_id && patient.user_id !== authUser.userId) {
         throw new AppError("Forbidden: cannot check in for another patient", 403);
     }
 
-    const registeredBy = isStaff ? (data.registeredBy || authUser.userId) : authUser.userId;
+    // Resolve registeredBy (references staff_profiles.id)
+    let registeredByStaffId: string | null = null;
+    if (isStaff) {
+        const staffLookup = await pool.query<{ id: string }>(
+            'SELECT id FROM "staff_profiles" WHERE user_id = $1 OR id = $1',
+            [data.registeredBy || authUser.userId]
+        );
+        if (staffLookup.rowCount && staffLookup.rows[0]) {
+            registeredByStaffId = staffLookup.rows[0].id;
+        }
+    }
+
+    // Map visit_type to enum: 'ONLINE' | 'WALKIN'.
+    // OPD / APPOINTMENT / WALK-IN all map to the WALKIN enum value (the DB
+    // visit_type enum only contains ONLINE and WALKIN).
+    let visitType: "ONLINE" | "WALKIN" = "WALKIN";
+    const rawType = (data.visitType || "").toUpperCase();
+    if (rawType === "ONLINE") {
+        visitType = "ONLINE";
+    } else {
+        visitType = "WALKIN";
+    }
 
     const insertRes = await pool.query(
         `INSERT INTO "visits" (
@@ -116,11 +141,11 @@ export async function createVisitService(
         RETURNING *`,
         [
             data.patientId,
-            data.visitType,
-            data.departmentId,
-            data.appointmentId,
-            data.assignedDoctorId,
-            registeredBy,
+            visitType,
+            data.departmentId ?? null,
+            data.appointmentId ?? null,
+            data.assignedDoctorId ?? null,
+            registeredByStaffId,
         ]
     );
 
@@ -129,7 +154,9 @@ export async function createVisitService(
         throw new AppError("Failed to create visit", 500);
     }
 
-    return formatVisit(row);
+    // For patients self-checking-in, registered_by (a staff_profiles.id) is
+    // null — surface the account user id instead for UI traceability.
+    return formatVisit(row, isStaff ? registeredByStaffId : authUser.userId);
 }
 
 export async function getVisitByIdService(
@@ -142,13 +169,13 @@ export async function getVisitByIdService(
             p.name as patient_name,
             p.owner_user_id as patient_owner_user_id,
             dept.name as department_name,
-            COALESCE(u.name, d.name) as doctor_name
+            doc_u.name as doctor_name
          FROM "visits" v
-         LEFT JOIN "Patient" p ON v.patient_id = p.id
-         LEFT JOIN "Department" dept ON v.department_id = dept.id
-         LEFT JOIN "Doctor" d ON v.assigned_doctor_id = d.id
-         LEFT JOIN "Staff" s ON d.staff_id = s.id
-         LEFT JOIN "User" u ON s.user_id = u.id
+         LEFT JOIN "patient_profiles" p ON v.patient_id = p.id
+         LEFT JOIN "departments" dept ON v.department_id = dept.id
+         LEFT JOIN "doctors" d ON v.assigned_doctor_id = d.id
+         LEFT JOIN "staff_profiles" s ON d.staff_id = s.id
+         LEFT JOIN "users" doc_u ON s.user_id = doc_u.id
          WHERE v.id = $1`,
         [visitId]
     );
@@ -175,54 +202,76 @@ export async function getVisitByIdService(
         investigationsRes,
         invoicesRes,
     ] = await Promise.all([
-        pool.query('SELECT * FROM "vitals" WHERE visit_id = $1 ORDER BY created_at ASC', [visitId]),
         pool.query(
-            `SELECT qe.*, dept.name as department_name, COALESCE(u.name, doc.name) as doctor_name
-             FROM "QueueEntry" qe
-             LEFT JOIN "Department" dept ON qe.department_id = dept.id
-             LEFT JOIN "Doctor" doc ON qe.doctor_id = doc.id
-             LEFT JOIN "Staff" s ON doc.staff_id = s.id
-             LEFT JOIN "User" u ON s.user_id = u.id
+            `SELECT 
+                v.*, 
+                v.pulse_bpm as heart_rate,
+                v.pulse_bpm as "heartRate",
+                v.spo2_percent as oxygen_saturation,
+                v.spo2_percent as "oxygenSaturation",
+                v.temperature_c as temperature,
+                v.height_cm as height,
+                v.weight_kg as weight,
+                v.recorded_at as created_at,
+                u.name as recorded_by_name
+             FROM "vitals" v
+             LEFT JOIN "staff_profiles" sp ON v.recorded_by = sp.id
+             LEFT JOIN "users" u ON sp.user_id = u.id
+             WHERE v.visit_id = $1
+             ORDER BY v.recorded_at ASC`,
+            [visitId]
+        ),
+        pool.query(
+            `SELECT 
+                qe.*, 
+                v.patient_id,
+                v.patient_id as "patientId",
+                dept.name as department_name, 
+                doc_u.name as doctor_name
+             FROM "queue_entries" qe
+             JOIN "visits" v ON qe.visit_id = v.id
+             LEFT JOIN "departments" dept ON qe.department_id = dept.id
+             LEFT JOIN "doctors" doc ON qe.doctor_id = doc.id
+             LEFT JOIN "staff_profiles" s ON doc.staff_id = s.id
+             LEFT JOIN "users" doc_u ON s.user_id = doc_u.id
              WHERE qe.visit_id = $1
-                OR (qe.appointment_id = $2 AND $2 IS NOT NULL)
              ORDER BY qe.created_at ASC`,
-            [visitId, visitRow.appointment_id]
+            [visitId]
         ),
         pool.query(
-            `SELECT c.*, COALESCE(u.name, doc.name) as doctor_name
-             FROM "Consultation" c
-             LEFT JOIN "Doctor" doc ON c.doctor_id = doc.id
-             LEFT JOIN "Staff" s ON doc.staff_id = s.id
-             LEFT JOIN "User" u ON s.user_id = u.id
+            `SELECT c.*, doc_u.name as doctor_name
+             FROM "consultations" c
+             LEFT JOIN "doctors" doc ON c.doctor_id = doc.id
+             LEFT JOIN "staff_profiles" s ON doc.staff_id = s.id
+             LEFT JOIN "users" doc_u ON s.user_id = doc_u.id
              WHERE c.visit_id = $1
-                OR (c.appointment_id = $2 AND $2 IS NOT NULL)
              ORDER BY c.created_at ASC`,
-            [visitId, visitRow.appointment_id]
+            [visitId]
         ),
         pool.query(
-            `SELECT pr.*, COALESCE(u.name, doc.name) as doctor_name
-             FROM "Prescription" pr
-             LEFT JOIN "Doctor" doc ON pr.doctor_id = doc.id
-             LEFT JOIN "Staff" s ON doc.staff_id = s.id
-             LEFT JOIN "User" u ON s.user_id = u.id
+            `SELECT pr.*, doc_u.name as doctor_name
+             FROM "prescriptions" pr
+             LEFT JOIN "doctors" doc ON pr.doctor_id = doc.id
+             LEFT JOIN "staff_profiles" s ON doc.staff_id = s.id
+             LEFT JOIN "users" doc_u ON s.user_id = doc_u.id
              WHERE pr.visit_id = $1
-                OR pr.consultation_id IN (
-                    SELECT id FROM "Consultation" WHERE visit_id = $1 OR (appointment_id = $2 AND $2 IS NOT NULL)
-                )
              ORDER BY pr.created_at ASC`,
-            [visitId, visitRow.appointment_id]
+            [visitId]
         ),
         pool.query(
-            `SELECT io.*, COALESCE(u.name, doc.name) as doctor_name
-             FROM "InvestigationOrder" io
-             LEFT JOIN "Doctor" doc ON io.doctor_id = doc.id
-             LEFT JOIN "Staff" s ON doc.staff_id = s.id
-             LEFT JOIN "User" u ON s.user_id = u.id
+            `SELECT io.*, doc_u.name as doctor_name
+             FROM "investigation_orders" io
+             LEFT JOIN "doctors" doc ON io.doctor_id = doc.id
+             LEFT JOIN "staff_profiles" s ON doc.staff_id = s.id
+             LEFT JOIN "users" doc_u ON s.user_id = doc_u.id
              WHERE io.visit_id = $1
              ORDER BY io.created_at ASC`,
             [visitId]
         ),
-        pool.query('SELECT * FROM "invoices" WHERE visit_id = $1 ORDER BY created_at ASC', [visitId]),
+        pool.query(
+            `SELECT * FROM "invoices" WHERE visit_id = $1 ORDER BY created_at ASC`,
+            [visitId]
+        ),
     ]);
 
     const formatted = formatVisit(visitRow);
@@ -247,13 +296,13 @@ export async function getCurrentPatientVisitService(userId: string) {
             p.name as patient_name,
             p.owner_user_id as patient_owner_user_id,
             dept.name as department_name,
-            COALESCE(u.name, d.name) as doctor_name
+            doc_u.name as doctor_name
          FROM "visits" v
-         JOIN "Patient" p ON v.patient_id = p.id
-         LEFT JOIN "Department" dept ON v.department_id = dept.id
-         LEFT JOIN "Doctor" d ON v.assigned_doctor_id = d.id
-         LEFT JOIN "Staff" s ON d.staff_id = s.id
-         LEFT JOIN "User" u ON s.user_id = u.id
+         JOIN "patient_profiles" p ON v.patient_id = p.id
+         LEFT JOIN "departments" dept ON v.department_id = dept.id
+         LEFT JOIN "doctors" d ON v.assigned_doctor_id = d.id
+         LEFT JOIN "staff_profiles" s ON d.staff_id = s.id
+         LEFT JOIN "users" doc_u ON s.user_id = doc_u.id
          WHERE p.owner_user_id = $1
            AND v.status NOT IN ('COMPLETED', 'CANCELLED')
          ORDER BY v.created_at DESC
@@ -276,54 +325,60 @@ export async function getCurrentPatientVisitService(userId: string) {
         investigationsRes,
         invoicesRes,
     ] = await Promise.all([
-        pool.query('SELECT * FROM "vitals" WHERE visit_id = $1 ORDER BY created_at ASC', [visitId]),
         pool.query(
-            `SELECT qe.*, dept.name as department_name, COALESCE(u.name, doc.name) as doctor_name
-             FROM "QueueEntry" qe
-             LEFT JOIN "Department" dept ON qe.department_id = dept.id
-             LEFT JOIN "Doctor" doc ON qe.doctor_id = doc.id
-             LEFT JOIN "Staff" s ON doc.staff_id = s.id
-             LEFT JOIN "User" u ON s.user_id = u.id
+            `SELECT v.*, u.name as recorded_by_name
+             FROM "vitals" v
+             LEFT JOIN "staff_profiles" sp ON v.recorded_by = sp.id
+             LEFT JOIN "users" u ON sp.user_id = u.id
+             WHERE v.visit_id = $1
+             ORDER BY v.recorded_at ASC`,
+            [visitId]
+        ),
+        pool.query(
+            `SELECT qe.*, dept.name as department_name, doc_u.name as doctor_name
+             FROM "queue_entries" qe
+             LEFT JOIN "departments" dept ON qe.department_id = dept.id
+             LEFT JOIN "doctors" doc ON qe.doctor_id = doc.id
+             LEFT JOIN "staff_profiles" s ON doc.staff_id = s.id
+             LEFT JOIN "users" doc_u ON s.user_id = doc_u.id
              WHERE qe.visit_id = $1
-                OR (qe.appointment_id = $2 AND $2 IS NOT NULL)
              ORDER BY qe.created_at ASC`,
-            [visitId, visitRow.appointment_id]
+            [visitId]
         ),
         pool.query(
-            `SELECT c.*, COALESCE(u.name, doc.name) as doctor_name
-             FROM "Consultation" c
-             LEFT JOIN "Doctor" doc ON c.doctor_id = doc.id
-             LEFT JOIN "Staff" s ON doc.staff_id = s.id
-             LEFT JOIN "User" u ON s.user_id = u.id
+            `SELECT c.*, doc_u.name as doctor_name
+             FROM "consultations" c
+             LEFT JOIN "doctors" doc ON c.doctor_id = doc.id
+             LEFT JOIN "staff_profiles" s ON doc.staff_id = s.id
+             LEFT JOIN "users" doc_u ON s.user_id = doc_u.id
              WHERE c.visit_id = $1
-                OR (c.appointment_id = $2 AND $2 IS NOT NULL)
              ORDER BY c.created_at ASC`,
-            [visitId, visitRow.appointment_id]
+            [visitId]
         ),
         pool.query(
-            `SELECT pr.*, COALESCE(u.name, doc.name) as doctor_name
-             FROM "Prescription" pr
-             LEFT JOIN "Doctor" doc ON pr.doctor_id = doc.id
-             LEFT JOIN "Staff" s ON doc.staff_id = s.id
-             LEFT JOIN "User" u ON s.user_id = u.id
+            `SELECT pr.*, doc_u.name as doctor_name
+             FROM "prescriptions" pr
+             LEFT JOIN "doctors" doc ON pr.doctor_id = doc.id
+             LEFT JOIN "staff_profiles" s ON doc.staff_id = s.id
+             LEFT JOIN "users" doc_u ON s.user_id = doc_u.id
              WHERE pr.visit_id = $1
-                OR pr.consultation_id IN (
-                    SELECT id FROM "Consultation" WHERE visit_id = $1 OR (appointment_id = $2 AND $2 IS NOT NULL)
-                )
              ORDER BY pr.created_at ASC`,
-            [visitId, visitRow.appointment_id]
+            [visitId]
         ),
         pool.query(
-            `SELECT io.*, COALESCE(u.name, doc.name) as doctor_name
-             FROM "InvestigationOrder" io
-             LEFT JOIN "Doctor" doc ON io.doctor_id = doc.id
-             LEFT JOIN "Staff" s ON doc.staff_id = s.id
-             LEFT JOIN "User" u ON s.user_id = u.id
+            `SELECT io.*, doc_u.name as doctor_name
+             FROM "investigation_orders" io
+             LEFT JOIN "doctors" doc ON io.doctor_id = doc.id
+             LEFT JOIN "staff_profiles" s ON doc.staff_id = s.id
+             LEFT JOIN "users" doc_u ON s.user_id = doc_u.id
              WHERE io.visit_id = $1
              ORDER BY io.created_at ASC`,
             [visitId]
         ),
-        pool.query('SELECT * FROM "invoices" WHERE visit_id = $1 ORDER BY created_at ASC', [visitId]),
+        pool.query(
+            `SELECT * FROM "invoices" WHERE visit_id = $1 ORDER BY created_at ASC`,
+            [visitId]
+        ),
     ]);
 
     const formatted = formatVisit(visitRow);
@@ -349,7 +404,7 @@ export async function updateVisitStatusService(
     const existingRes = await pool.query(
         `SELECT v.*, p.owner_user_id as patient_owner_user_id
          FROM "visits" v
-         LEFT JOIN "Patient" p ON v.patient_id = p.id
+         LEFT JOIN "patient_profiles" p ON v.patient_id = p.id
          WHERE v.id = $1`,
         [visitId]
     );
@@ -380,9 +435,11 @@ export async function updateVisitStatusService(
         );
     }
 
+    const completedAtClause = newStatus === "COMPLETED" ? ", completed_at = CURRENT_TIMESTAMP" : "";
+
     const updateRes = await pool.query(
         `UPDATE "visits"
-         SET status = $1, updated_at = CURRENT_TIMESTAMP
+         SET status = $1, updated_at = CURRENT_TIMESTAMP ${completedAtClause}
          WHERE id = $2
          RETURNING *`,
         [newStatus, visitId]
@@ -402,7 +459,7 @@ export async function listVisitsService(
 
     if (!isStaff && authUser?.userId) {
         params.push(authUser.userId);
-        conditions.push(`p.owner_user_id = $${params.length}`);
+        conditions.push(`p.user_id = $${params.length}`);
     }
 
     if (status) {
@@ -418,17 +475,17 @@ export async function listVisitsService(
             p.name as patient_name,
             p.owner_user_id as patient_owner_user_id,
             dept.name as department_name,
-            COALESCE(u.name, d.name) as doctor_name
+            doc_u.name as doctor_name
         FROM "visits" v
-        JOIN "Patient" p ON v.patient_id = p.id
-        LEFT JOIN "Department" dept ON v.department_id = dept.id
-        LEFT JOIN "Doctor" d ON v.assigned_doctor_id = d.id
-        LEFT JOIN "Staff" s ON d.staff_id = s.id
-        LEFT JOIN "User" u ON s.user_id = u.id
+        JOIN "patient_profiles" p ON v.patient_id = p.id
+        LEFT JOIN "departments" dept ON v.department_id = dept.id
+        LEFT JOIN "doctors" d ON v.assigned_doctor_id = d.id
+        LEFT JOIN "staff_profiles" s ON d.staff_id = s.id
+        LEFT JOIN "users" doc_u ON s.user_id = doc_u.id
         ${whereClause}
         ORDER BY v.created_at DESC
     `;
 
     const res = await pool.query(query, params);
-    return res.rows.map(formatVisit);
+    return res.rows.map((row) => formatVisit(row));
 }

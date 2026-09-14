@@ -8,6 +8,9 @@ import {
   Users,
   Shield,
   UserCheck,
+  FlaskConical,
+  Pill,
+  Heart,
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 
@@ -30,30 +33,50 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps = {}) {
   const isStaff = role === 'STAFF' && !isDoctor;
   const isAdmin = role === 'ADMIN';
 
-  const patientNav: NavItem[] = [
-    { label: 'Dashboard', href: '/patient/dashboard', icon: LayoutDashboard },
-    { label: 'Appointments', href: '/patient/appointments', icon: Calendar },
-    { label: 'Care Journey', href: '/patient/journey', icon: Activity },
-    { label: 'Medical Records', href: '/patient/records', icon: FileText },
-    { label: 'Profile Settings', href: '/patient/profile', icon: User },
+  const userNav: NavItem[] = [
+    { label: 'Dashboard', href: '/user/dashboard', icon: LayoutDashboard },
+    { label: 'Appointments', href: '/user/appointments', icon: Calendar },
+    { label: 'Care Journey', href: '/user/journey', icon: Activity },
+    { label: 'Medical Records', href: '/user/records', icon: FileText },
+    { label: 'Profile Settings', href: '/user/profile', icon: User },
   ];
 
   const doctorNav: NavItem[] = [
-    { label: 'Dashboard', href: '/doctor/dashboard', icon: LayoutDashboard },
-    { label: 'Daily Schedule', href: '/doctor/schedule', icon: Calendar },
-    { label: 'Assigned Patients', href: '/doctor/patients', icon: Users },
+    { label: 'Dashboard', href: '/staff/doctor/dashboard', icon: LayoutDashboard },
+    { label: 'Daily Schedule', href: '/staff/doctor/schedule', icon: Calendar },
+    { label: 'Assigned Patients', href: '/staff/doctor/patients', icon: Users },
   ];
 
-  let staffLabel = 'Staff Portal';
-  if (staffRole === 'RECEPTIONIST') staffLabel = 'Reception & Intake';
-  else if (staffRole === 'NURSE') staffLabel = 'Nurse Triage Station';
-  else if (staffRole === 'PHARMACIST') staffLabel = 'Pharmacy Dispensing';
-  else if (staffRole === 'LAB_TECH' || staffRole === 'LAB_STAFF') staffLabel = 'Diagnostic Lab';
-  else if (staffRole === 'BILLING_CLERK') staffLabel = 'Billing & Accounts';
-
-  const staffNav: NavItem[] = [
-    { label: staffLabel, href: '/staff/dashboard', icon: LayoutDashboard },
-  ];
+  let staffNav: NavItem[] = [];
+  if (staffRole === 'RECEPTIONIST') {
+    staffNav = [
+      { label: 'Reception & Intake', href: '/staff/opd', icon: LayoutDashboard },
+    ];
+  } else if (staffRole === 'OPD_MANAGER') {
+    staffNav = [
+      { label: 'OPD Management', href: '/staff/opd', icon: LayoutDashboard },
+    ];
+  } else if (staffRole === 'NURSE') {
+    staffNav = [
+      { label: 'Nurse Station', href: '/staff/nurse', icon: Heart },
+    ];
+  } else if (staffRole === 'PHARMACIST') {
+    staffNav = [
+      { label: 'Pharmacy Dispensing', href: '/staff/pharmacy', icon: Pill },
+    ];
+  } else if (staffRole === 'LAB_TECH' || staffRole === 'LAB_STAFF') {
+    staffNav = [
+      { label: 'Diagnostic Lab', href: '/staff/lab', icon: FlaskConical },
+    ];
+  } else if (staffRole === 'BILLING_CLERK') {
+    staffNav = [
+      { label: 'Billing & Accounts', href: '/staff/billing', icon: FileText },
+    ];
+  } else {
+    staffNav = [
+      { label: 'Staff Workspace', href: '/staff/opd', icon: LayoutDashboard },
+    ];
+  }
 
   const adminNav: NavItem[] = [
     { label: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
@@ -62,7 +85,7 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps = {}) {
     { label: 'Patient Registry', href: '/admin/patients', icon: User },
   ];
 
-  const navItems = isDoctor ? doctorNav : isStaff ? staffNav : isAdmin ? adminNav : patientNav;
+  const navItems = isDoctor ? doctorNav : isStaff ? staffNav : isAdmin ? adminNav : userNav;
 
   const navigate = (href: string, e: MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
@@ -75,20 +98,61 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps = {}) {
     }
   };
 
+  const isItemActive = (href: string) => {
+    if (currentPath === href) return true;
+
+    // Map /user/* with legacy /patient/*
+    if (
+      href === '/user/dashboard' &&
+      (currentPath === '/user' ||
+        currentPath === '/user/dashboard' ||
+        currentPath === '/patient' ||
+        currentPath === '/patient/dashboard')
+    ) {
+      return true;
+    }
+    if (href === '/user/appointments' && (currentPath.startsWith('/user/appointments') || currentPath.startsWith('/patient/appointments'))) return true;
+    if (href === '/user/journey' && (currentPath.startsWith('/user/journey') || currentPath.startsWith('/patient/journey'))) return true;
+    if (href === '/user/records' && (currentPath.startsWith('/user/records') || currentPath.startsWith('/patient/records'))) return true;
+    if (href === '/user/profile' && (currentPath.startsWith('/user/profile') || currentPath.startsWith('/patient/profile'))) return true;
+
+    // Map /staff/doctor/* with legacy /doctor/*
+    if (
+      href === '/staff/doctor/dashboard' &&
+      (currentPath === '/staff/doctor' ||
+        currentPath === '/staff/doctor/dashboard' ||
+        currentPath === '/doctor' ||
+        currentPath === '/doctor/dashboard')
+    ) {
+      return true;
+    }
+    if (href === '/staff/doctor/schedule' && (currentPath.startsWith('/staff/doctor/schedule') || currentPath.startsWith('/doctor/schedule'))) return true;
+    if (href === '/staff/doctor/patients' && (currentPath.startsWith('/staff/doctor/patients') || currentPath.startsWith('/doctor/patients'))) return true;
+
+    // Map /admin/*
+    if (href === '/admin/dashboard' && (currentPath === '/admin' || currentPath === '/admin/dashboard')) return true;
+
+    // Default prefix match for other routes
+    if (
+      href !== '/user/dashboard' &&
+      href !== '/staff/doctor/dashboard' &&
+      href !== '/admin/dashboard' &&
+      currentPath.startsWith(href)
+    ) {
+      return true;
+    }
+
+    return false;
+  };
+
   return (
     <aside className={`app-sidebar ${isOpen ? 'open' : ''}`} aria-label="Portal Navigation">
       <div className="sidebar-section-title">
-        {isDoctor ? 'Doctor Workspace' : isStaff ? 'Staff Workspace' : isAdmin ? 'Admin Workspace' : 'Patient Workspace'}
+        {isDoctor ? 'Doctor Workspace' : isStaff ? 'Staff Workspace' : isAdmin ? 'Admin Workspace' : 'User Workspace'}
       </div>
       <nav className="sidebar-nav">
         {navItems.map((item) => {
-          const isActive =
-            currentPath === item.href ||
-            (item.href !== '/patient/dashboard' &&
-              item.href !== '/doctor/dashboard' &&
-              item.href !== '/staff/dashboard' &&
-              item.href !== '/admin/dashboard' &&
-              currentPath.startsWith(item.href));
+          const isActive = isItemActive(item.href);
           const IconComponent = item.icon;
 
           return (

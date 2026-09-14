@@ -8,27 +8,55 @@ import type { StaffRole } from "#types/auth.types.js";
 const SALT_ROUNDS = 10;
 
 export type LoginResult = {
+    success: boolean;
+    message: string;
+    data: {
+        token: string;
+        user: {
+            id: string;
+            name: string;
+            email: string;
+            role: "USER" | "STAFF" | "ADMIN";
+            staffRole?: StaffRole | undefined;
+        };
+        staff: {
+            id: string;
+            staffRole: StaffRole;
+            role?: StaffRole;
+            employeeCode?: string;
+            status?: string;
+            department?: string;
+        } | null;
+        doctor?: {
+            id: string;
+            name: string;
+            email: string;
+            specialization?: string | undefined;
+            department?: string | undefined;
+        } | null;
+    };
     token: string;
     user: {
         id: string;
         name: string;
         email: string;
-        role: "PATIENT" | "STAFF" | "ADMIN";
+        role: "USER" | "STAFF" | "ADMIN";
         staffRole?: StaffRole | undefined;
     };
     staff?: {
         id: string;
-        employeeCode: string;
-        role: string;
-        status: string;
-    } | undefined;
+        staffRole: StaffRole;
+        role?: StaffRole;
+        employeeCode?: string;
+        status?: string;
+    } | null;
     doctor?: {
         id: string;
         name: string;
         email: string;
         specialization?: string | undefined;
         department?: string | undefined;
-    } | undefined;
+    } | null;
     admin?: {
         id: string;
         name: string;
@@ -57,7 +85,7 @@ export async function loginService(email: string, password: string): Promise<Log
         throw new AppError("JWT secret is not configured or too weak", 500);
     }
 
-    // 1. Look up by email in users joined with staff_profiles
+    // Look up by email in users joined with staff_profiles, doctors, and departments
     const userResult = await pool.query(
         `SELECT 
             u.id, 
@@ -68,15 +96,15 @@ export async function loginService(email: string, password: string): Promise<Log
             u.is_active,
             sp.id as staff_id,
             sp.employee_code,
-            sp.role as staff_role,
+            sp.staff_role,
             sp.status as staff_status,
             d.id as doctor_id, 
             d.specialization, 
-            COALESCE(dept.name, d.department) as department
-         FROM users u
-         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
-         LEFT JOIN "Doctor" d ON d.staff_id = sp.id
-         LEFT JOIN "Department" dept ON d.department_id = dept.id
+            dept.name as department
+         FROM "users" u
+         LEFT JOIN "staff_profiles" sp ON sp.user_id = u.id
+         LEFT JOIN "doctors" d ON d.staff_id = sp.id
+         LEFT JOIN "departments" dept ON sp.department_id = dept.id
          WHERE u.email = $1`,
         [email]
     );
@@ -92,8 +120,8 @@ export async function loginService(email: string, password: string): Promise<Log
             throw new AppError("Account is inactive", 403);
         }
 
-        const rawRole = String(row.role ?? "PATIENT").toUpperCase();
-        let role: "PATIENT" | "STAFF" | "ADMIN" = "PATIENT";
+        const rawRole = String(row.role ?? "USER").toUpperCase();
+        let role: "USER" | "STAFF" | "ADMIN" = "USER";
         let staffRole: StaffRole | undefined = undefined;
 
         if (rawRole === "ADMIN") {
@@ -102,13 +130,13 @@ export async function loginService(email: string, password: string): Promise<Log
             role = "STAFF";
             staffRole = (row.staff_role as StaffRole) || (row.doctor_id ? "DOCTOR" : undefined);
         } else {
-            role = "PATIENT";
+            role = "USER";
         }
 
         const tokenPayload: {
             userId: string;
             email: string;
-            role: "PATIENT" | "STAFF" | "ADMIN";
+            role: "USER" | "STAFF" | "ADMIN";
             staffRole?: StaffRole;
         } = {
             userId: row.id,
@@ -122,35 +150,45 @@ export async function loginService(email: string, password: string): Promise<Log
 
         const token = jwt.sign(tokenPayload, jwtSecret, { expiresIn: "4h" });
 
-        const result: LoginResult = {
-            token,
-            user: {
-                id: row.id,
-                name: row.name,
-                email: row.email,
-                role,
-                ...(role === "STAFF" && staffRole ? { staffRole } : {}),
-            },
+        const userObj = {
+            id: row.id,
+            name: row.name,
+            email: row.email,
+            role,
+            ...(role === "STAFF" && staffRole ? { staffRole } : {}),
         };
 
-        if (row.staff_id) {
-            result.staff = {
-                id: row.staff_id,
-                employeeCode: row.employee_code,
-                role: row.staff_role,
-                status: row.staff_status,
-            };
-        }
+        const staffObj = (role === "STAFF" && (row.staff_id || staffRole)) ? {
+            id: row.staff_id || "",
+            employeeCode: row.employee_code,
+            staffRole: (staffRole || row.staff_role) as StaffRole,
+            role: (staffRole || row.staff_role) as StaffRole,
+            status: row.staff_status || "ACTIVE",
+            department: row.department,
+        } : null;
 
-        if (row.doctor_id) {
-            result.doctor = {
-                id: row.doctor_id,
-                name: row.name,
-                email: row.email,
-                specialization: row.specialization,
-                department: row.department,
-            };
-        }
+        const doctorObj = (role === "STAFF" && staffRole === "DOCTOR" && row.doctor_id) ? {
+            id: row.doctor_id,
+            name: row.name,
+            email: row.email,
+            specialization: row.specialization,
+            department: row.department,
+        } : null;
+
+        const result: LoginResult = {
+            success: true,
+            message: "Login successful",
+            data: {
+                token,
+                user: userObj,
+                staff: staffObj,
+                ...(doctorObj ? { doctor: doctorObj } : {}),
+            },
+            token,
+            user: userObj,
+            staff: staffObj,
+            ...(doctorObj ? { doctor: doctorObj } : {}),
+        };
 
         if (role === "ADMIN") {
             result.admin = {
@@ -163,85 +201,91 @@ export async function loginService(email: string, password: string): Promise<Log
         return result;
     }
 
-    // 2. Fallback check for Admin table (legacy)
-    const adminResult = await pool.query(
-        'SELECT id, name, email, password FROM "Admin" WHERE email = $1',
-        [email]
-    );
-
-    if (adminResult.rowCount && adminResult.rows[0]) {
-        const admin = adminResult.rows[0];
-        const passwordMatch = await bcrypt.compare(password, admin.password);
-        if (!passwordMatch) {
-            throw new AppError("Invalid email or password", 401);
-        }
-
-        const token = jwt.sign(
-            { userId: admin.id, email: admin.email, role: "ADMIN" },
-            jwtSecret,
-            { expiresIn: "4h" }
-        );
-
-        return {
-            token,
-            user: {
-                id: admin.id,
-                name: admin.name,
-                email: admin.email,
-                role: "ADMIN",
-            },
-            admin: {
-                id: admin.id,
-                name: admin.name,
-                email: admin.email,
-            },
-        };
-    }
-
-    // 3. Fallback check for Doctor table (legacy)
-    const docResult = await pool.query(
-        'SELECT id, name, email, password, specialization, department FROM "Doctor" WHERE email = $1',
-        [email]
-    );
-
-    if (docResult.rowCount && docResult.rows[0] && docResult.rows[0].password) {
-        const doctor = docResult.rows[0];
-        const passwordMatch = await bcrypt.compare(password, doctor.password);
-        if (!passwordMatch) {
-            throw new AppError("Invalid email or password", 401);
-        }
-
-        const token = jwt.sign(
-            {
-                userId: doctor.id,
-                email: doctor.email ?? email,
-                role: "STAFF",
-                staffRole: "DOCTOR",
-            },
-            jwtSecret,
-            { expiresIn: "4h" }
-        );
-
-        return {
-            token,
-            user: {
-                id: doctor.id,
-                name: doctor.name ?? "Doctor",
-                email: doctor.email ?? email,
-                role: "STAFF",
-                staffRole: "DOCTOR",
-            },
-            doctor: {
-                id: doctor.id,
-                name: doctor.name ?? "Doctor",
-                email: doctor.email ?? email,
-                specialization: doctor.specialization,
-                department: doctor.department,
-            },
-        };
-    }
-
     throw new AppError("Invalid email or password", 401);
+}
+
+export async function meService(userId: string) {
+    const userResult = await pool.query(
+        `SELECT 
+            u.id, 
+            u.name, 
+            u.email, 
+            u.role,
+            u.is_active,
+            sp.id as staff_id,
+            sp.employee_code,
+            sp.staff_role,
+            sp.status as staff_status,
+            d.id as doctor_id, 
+            d.specialization, 
+            dept.name as department
+         FROM "users" u
+         LEFT JOIN "staff_profiles" sp ON sp.user_id = u.id
+         LEFT JOIN "doctors" d ON d.staff_id = sp.id
+         LEFT JOIN "departments" dept ON sp.department_id = dept.id
+         WHERE u.id = $1`,
+        [userId]
+    );
+
+    if (!userResult.rowCount || !userResult.rows[0]) {
+        throw new AppError("User not found", 404);
+    }
+
+    const row = userResult.rows[0];
+    if (row.is_active === false || (row.role === "STAFF" && row.staff_status === "INACTIVE")) {
+        throw new AppError("Account is inactive", 403);
+    }
+
+    const rawRole = String(row.role ?? "USER").toUpperCase();
+    let role: "USER" | "STAFF" | "ADMIN" = "USER";
+    let staffRole: StaffRole | undefined = undefined;
+
+    if (rawRole === "ADMIN") {
+        role = "ADMIN";
+    } else if (rawRole === "STAFF" || row.staff_id) {
+        role = "STAFF";
+        staffRole = (row.staff_role as StaffRole) || (row.doctor_id ? "DOCTOR" : undefined);
+    } else {
+        role = "USER";
+    }
+
+    const userObj = {
+        id: row.id,
+        name: row.name,
+        email: row.email,
+        role,
+        ...(role === "STAFF" && staffRole ? { staffRole } : {}),
+    };
+
+    const staffObj = (role === "STAFF" && (row.staff_id || staffRole)) ? {
+        id: row.staff_id || "",
+        employeeCode: row.employee_code,
+        staffRole: (staffRole || row.staff_role) as StaffRole,
+        role: (staffRole || row.staff_role) as StaffRole,
+        status: row.staff_status || "ACTIVE",
+        department: row.department,
+    } : null;
+
+    const doctorObj = (role === "STAFF" && staffRole === "DOCTOR" && row.doctor_id) ? {
+        id: row.doctor_id,
+        name: row.name,
+        email: row.email,
+        specialization: row.specialization,
+        department: row.department,
+    } : null;
+
+    return {
+        success: true,
+        message: "Current session retrieved",
+        data: {
+            user: userObj,
+            staff: staffObj,
+            ...(doctorObj ? { doctor: doctorObj } : {}),
+        },
+        user: userObj,
+        staff: staffObj,
+        ...(doctorObj ? { doctor: doctorObj } : {}),
+    };
 }
 
 export async function registerService(
@@ -261,13 +305,22 @@ export async function registerService(
 
     try {
         const result = await pool.query(
-            "INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, 'PATIENT') RETURNING id, email",
+            'INSERT INTO "users" (name, email, password, role) VALUES ($1, $2, $3, \'USER\') RETURNING id, email',
             [name, email, hashedPassword],
         );
 
         if (result.rowCount === 0 || !result.rows[0]) {
             throw new AppError("Failed to register user", 500);
         }
+
+        const userId = result.rows[0].id;
+
+        // Ensure default patient_profile exists for newly registered user
+        await pool.query(
+            `INSERT INTO "patient_profiles" (owner_user_id, name, date_of_birth, gender)
+             VALUES ($1, $2, '2000-01-01', 'Other')`,
+            [userId, name]
+        );
 
         return { email: result.rows[0].email };
     } catch (err: unknown) {

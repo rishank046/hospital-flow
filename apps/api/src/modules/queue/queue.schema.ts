@@ -2,8 +2,12 @@ import { z } from "zod";
 
 export const queueTypeEnum = z.enum([
     "APPOINTMENT",
+    "WALKIN",
     "WALK_IN",
     "EMERGENCY",
+    "DIAGNOSTICS",
+    "PHARMACY",
+    "BILLING",
 ]);
 
 export const queueStatusEnum = z.enum([

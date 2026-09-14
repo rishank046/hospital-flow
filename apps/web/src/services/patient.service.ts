@@ -10,6 +10,23 @@ import type {
 } from '../types/patient.types';
 
 export const patientService = {
+  listMyPatients: async () => {
+    const data = await request<{ patients?: PatientProfile[] } | PatientProfile[]>('/patients');
+    const rawList = (Array.isArray(data) ? data : data.patients || []) as PatientProfile[];
+    return rawList.map((p) => ({
+      ...p,
+      patientType: p.patientType || p.patient_type || 'Online',
+      createdAt: p.createdAt || p.created_at,
+    }));
+  },
+
+  createPatientProfile: async (payload: import('../types/patient.types').CreatePatientProfilePayload) => {
+    return request<PatientProfile>('/patients', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
   getProfile: async () => {
     const data = await request<PatientProfile>('/patients/me');
     return {

@@ -6,16 +6,14 @@ import type { JoinQueueInput, QueueFilterQuery } from "./queue.schema.js";
 
 interface QueueEntryRow {
     id: string;
-    visit_id: string | null;
-    patient_id: string;
+    visit_id: string;
     doctor_id: string | null;
     department_id: string | null;
-    appointment_id: string | null;
-    type: string;
+    queue_type: string;
     priority: number;
     status: string;
+    token_number: number | null;
     joined_at: Date;
-    scheduled_time: Date | null;
     started_at: Date | null;
     completed_at: Date | null;
     called_at: Date | null;
@@ -29,7 +27,7 @@ export async function calculateQueuePosition(
 ): Promise<number> {
     const posRes = await pool.query<{ count: string }>(
         `SELECT COUNT(*) as count
-         FROM "QueueEntry"
+         FROM "queue_entries"
          WHERE status IN ('WAITING', 'CALLED')
            AND (($1::uuid IS NULL AND doctor_id IS NULL) OR doctor_id = $1::uuid)
            AND (priority > $2 OR (priority = $2 AND joined_at <= $3))`,
@@ -45,18 +43,35 @@ export async function joinQueueService(data: JoinQueueInput, authUser?: AuthPayl
     let doctorId = data.doctorId || data.doctor_id || null;
     let departmentId = data.departmentId || data.department_id || null;
     let appointmentId = data.appointmentId || data.appointment_id || null;
-    const type = data.type ?? "WALK_IN";
+    const rawType = (data.type ?? "WALKIN").toUpperCase();
     let priority = data.priority ?? 0;
 
-    // If emergency, ensure priority is high
-    if (type === "EMERGENCY" && priority === 0) {
-        priority = 100;
+    let queueType: "APPOINTMENT" | "WALKIN" | "DIAGNOSTICS" | "PHARMACY" | "BILLING" = "WALKIN";
+    if (rawType === "APPOINTMENT") {
+        queueType = "APPOINTMENT";
+    } else if (rawType === "DIAGNOSTICS") {
+        queueType = "DIAGNOSTICS";
+    } else if (rawType === "PHARMACY") {
+        queueType = "PHARMACY";
+    } else if (rawType === "BILLING") {
+        queueType = "BILLING";
+    } else if (rawType === "EMERGENCY") {
+        // Emergency walk-ins get an automatic priority bump when the caller
+        // did not specify one. The enum has no EMERGENCY value, so it is
+        // stored as WALKIN with high priority.
+        queueType = "WALKIN";
+        if (priority === 0) priority = 100;
+    } else {
+        queueType = "WALKIN";
     }
+    // Preserve the caller's requested type (e.g. WALK_IN / EMERGENCY) for the
+    // response payload; the DB stores the normalized enum value.
+    const requestedType = rawType;
 
     // If appointment ID provided, resolve details if not present
     if (appointmentId) {
         const apptRes = await pool.query<{ id: string; doctor_id: string }>(
-            'SELECT id, doctor_id FROM "Appointment" WHERE id = $1',
+            'SELECT id, doctor_id FROM "appointments" WHERE id = $1',
             [appointmentId]
         );
         if (apptRes.rowCount && apptRes.rows[0]) {
@@ -69,7 +84,10 @@ export async function joinQueueService(data: JoinQueueInput, authUser?: AuthPayl
     // If doctorId provided but departmentId is missing, resolve doctor's department
     if (doctorId && !departmentId) {
         const docRes = await pool.query<{ department_id: string | null }>(
-            'SELECT department_id FROM "Doctor" WHERE id = $1',
+            `SELECT s.department_id 
+             FROM "doctors" d
+             JOIN "staff_profiles" s ON d.staff_id = s.id
+             WHERE d.id = $1`,
             [doctorId]
         );
         if (docRes.rowCount && docRes.rows[0]?.department_id) {
@@ -83,8 +101,8 @@ export async function joinQueueService(data: JoinQueueInput, authUser?: AuthPayl
             throw new AppError("patientId is required when visitId is not provided", 400);
         }
 
-        const patientRes = await pool.query<{ id: string; owner_user_id: string }>(
-            'SELECT id, owner_user_id FROM "Patient" WHERE id = $1',
+        const patientRes = await pool.query<{ id: string; user_id: string }>(
+            'SELECT id, owner_user_id as user_id FROM "patient_profiles" WHERE id = $1',
             [patientId]
         );
         if (patientRes.rowCount === 0 || !patientRes.rows[0]) {
@@ -92,7 +110,7 @@ export async function joinQueueService(data: JoinQueueInput, authUser?: AuthPayl
         }
 
         const callerAuth: AuthPayload = authUser || {
-            userId: patientRes.rows[0].owner_user_id,
+            userId: patientRes.rows[0].user_id || "system",
             email: "queue@hospital.internal",
             role: "PATIENT",
         };
@@ -100,7 +118,7 @@ export async function joinQueueService(data: JoinQueueInput, authUser?: AuthPayl
         const createdVisit = await createVisitService(
             {
                 patientId,
-                visitType: type as any,
+                visitType: queueType === "APPOINTMENT" ? "APPOINTMENT" : "OPD",
                 departmentId: departmentId ?? null,
                 appointmentId: appointmentId ?? null,
                 assignedDoctorId: doctorId ?? null,
@@ -150,34 +168,24 @@ export async function joinQueueService(data: JoinQueueInput, authUser?: AuthPayl
         await updateVisitStatusService(visitId, "WAITING_OPD", transitionAuth);
     }
 
-    const scheduledTime = data.scheduledTime || data.scheduled_time
-        ? new Date((data.scheduledTime || data.scheduled_time)!)
-        : null;
-
     const insertRes = await pool.query<QueueEntryRow>(
-        `INSERT INTO "QueueEntry" (
-            patient_id,
-            doctor_id,
+        `INSERT INTO "queue_entries" (
+            visit_id,
             department_id,
-            appointment_id,
-            type,
+            doctor_id,
+            queue_type,
             priority,
             status,
-            scheduled_time,
-            joined_at,
-            visit_id
+            joined_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, 'WAITING', $7, CURRENT_TIMESTAMP, $8)
+         VALUES ($1, $2, $3, $4, $5, 'WAITING', CURRENT_TIMESTAMP)
          RETURNING *`,
         [
-            patientId,
-            doctorId,
-            departmentId,
-            appointmentId,
-            type,
-            priority,
-            scheduledTime,
             visitId,
+            departmentId,
+            doctorId,
+            queueType,
+            priority,
         ]
     );
 
@@ -190,6 +198,14 @@ export async function joinQueueService(data: JoinQueueInput, authUser?: AuthPayl
 
     return {
         ...entry,
+        patient_id: patientId,
+        patientId,
+        doctor_id: doctorId,
+        doctorId,
+        appointment_id: appointmentId,
+        appointmentId,
+        queue_type: entry.queue_type,
+        type: requestedType,
         visit_id: entry.visit_id,
         visitId: entry.visit_id,
         position,
@@ -211,10 +227,11 @@ export async function getQueueService(filter: QueueFilterQuery) {
     }
 
     if (filter.status) {
-        params.push(filter.status);
+        const mappedStatus = filter.status === "SERVING" ? "IN_PROGRESS" : filter.status;
+        params.push(mappedStatus);
         conditions.push(`q.status = $${params.length}`);
     } else {
-        conditions.push(`q.status IN ('WAITING', 'CALLED', 'IN_PROGRESS', 'SERVING')`);
+        conditions.push(`q.status IN ('WAITING', 'CALLED', 'IN_PROGRESS')`);
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -224,35 +241,36 @@ export async function getQueueService(filter: QueueFilterQuery) {
             q.id,
             q.visit_id,
             q.visit_id as "visitId",
-            q.patient_id,
-            q.patient_id as "patientId",
+            v.patient_id,
+            v.patient_id as "patientId",
             p.name as patient_name,
-            p.age as patient_age,
+            EXTRACT(YEAR FROM age(p.date_of_birth))::int as patient_age,
             p.gender as patient_gender,
-            p.patient_type,
+            'Walkin' as patient_type,
             q.doctor_id,
             q.doctor_id as "doctorId",
-            COALESCE(u.name, d.name) as doctor_name,
+            u.name as doctor_name,
             q.department_id,
             q.department_id as "departmentId",
-            COALESCE(dept.name, d.department) as department_name,
-            q.appointment_id,
-            q.appointment_id as "appointmentId",
-            q.type,
+            dept.name as department_name,
+            v.appointment_id,
+            v.appointment_id as "appointmentId",
+            CASE WHEN q.priority >= 10 THEN 'EMERGENCY' ELSE q.queue_type::text END as type,
             q.priority,
             q.status,
+            q.token_number,
             q.joined_at,
-            q.scheduled_time,
             q.started_at,
             q.completed_at,
             q.called_at,
             q.created_at
-        FROM "QueueEntry" q
-        JOIN "Patient" p ON q.patient_id = p.id
-        LEFT JOIN "Doctor" d ON q.doctor_id = d.id
-        LEFT JOIN "Staff" s ON d.staff_id = s.id
-        LEFT JOIN "User" u ON s.user_id = u.id
-        LEFT JOIN "Department" dept ON q.department_id = dept.id
+        FROM "queue_entries" q
+        JOIN "visits" v ON q.visit_id = v.id
+        JOIN "patient_profiles" p ON v.patient_id = p.id
+        LEFT JOIN "doctors" d ON q.doctor_id = d.id
+        LEFT JOIN "staff_profiles" s ON d.staff_id = s.id
+        LEFT JOIN "users" u ON s.user_id = u.id
+        LEFT JOIN "departments" dept ON q.department_id = dept.id
         ${whereClause}
         ORDER BY q.priority DESC, q.joined_at ASC
     `;
@@ -276,19 +294,20 @@ export async function getQueueService(filter: QueueFilterQuery) {
                 q.id,
                 q.visit_id,
                 q.visit_id as "visitId",
-                q.patient_id,
+                v.patient_id,
                 p.name as patient_name,
                 q.doctor_id,
-                COALESCE(u.name, d.name) as doctor_name,
+                u.name as doctor_name,
                 q.status
-             FROM "QueueEntry" q
-             JOIN "Patient" p ON q.patient_id = p.id
-             LEFT JOIN "Doctor" d ON q.doctor_id = d.id
-             LEFT JOIN "Staff" s ON d.staff_id = s.id
-             LEFT JOIN "User" u ON s.user_id = u.id
+             FROM "queue_entries" q
+             JOIN "visits" v ON q.visit_id = v.id
+             JOIN "patient_profiles" p ON v.patient_id = p.id
+             LEFT JOIN "doctors" d ON q.doctor_id = d.id
+             LEFT JOIN "staff_profiles" s ON d.staff_id = s.id
+             LEFT JOIN "users" u ON s.user_id = u.id
              WHERE q.doctor_id = $1
-               AND q.status IN ('IN_PROGRESS', 'SERVING', 'CALLED')
-             ORDER BY CASE WHEN q.status IN ('IN_PROGRESS', 'SERVING') THEN 1 ELSE 2 END, q.started_at DESC NULLS LAST
+               AND q.status IN ('IN_PROGRESS', 'CALLED')
+             ORDER BY CASE WHEN q.status = 'IN_PROGRESS' THEN 1 ELSE 2 END, q.started_at DESC NULLS LAST
              LIMIT 1`,
             [filter.doctorId]
         );
@@ -307,7 +326,7 @@ export async function getQueueService(filter: QueueFilterQuery) {
 export async function callNextService(doctorId: string) {
     const nextRes = await pool.query<QueueEntryRow>(
         `SELECT id
-         FROM "QueueEntry"
+         FROM "queue_entries"
          WHERE doctor_id = $1
            AND status = 'WAITING'
          ORDER BY priority DESC, joined_at ASC
@@ -320,19 +339,28 @@ export async function callNextService(doctorId: string) {
     }
 
     const nextId = nextRes.rows[0].id;
-    const updateRes = await pool.query<QueueEntryRow>(
-        `UPDATE "QueueEntry"
+    await pool.query(
+        `UPDATE "queue_entries"
          SET status = 'CALLED',
              called_at = CURRENT_TIMESTAMP
-         WHERE id = $1
-         RETURNING *`,
+         WHERE id = $1`,
         [nextId]
     );
 
-    const row = updateRes.rows[0];
+    const detailedRes = await pool.query(
+        `SELECT q.*, v.patient_id, v.patient_id as "patientId", p.name as patient_name
+         FROM "queue_entries" q
+         JOIN "visits" v ON q.visit_id = v.id
+         JOIN "patient_profiles" p ON v.patient_id = p.id
+         WHERE q.id = $1`,
+        [nextId]
+    );
+
+    const row = detailedRes.rows[0];
     return row
         ? {
               ...row,
+              type: row.queue_type,
               visitId: row.visit_id,
               visit_id: row.visit_id,
           }
@@ -345,7 +373,7 @@ export async function startServingService(
     authUser?: AuthPayload
 ) {
     const checkRes = await pool.query<QueueEntryRow>(
-        'SELECT id, doctor_id, status, visit_id FROM "QueueEntry" WHERE id = $1',
+        'SELECT id, doctor_id, status, visit_id FROM "queue_entries" WHERE id = $1',
         [queueEntryId]
     );
 
@@ -360,7 +388,7 @@ export async function startServingService(
     }
 
     const updateRes = await pool.query<QueueEntryRow>(
-        `UPDATE "QueueEntry"
+        `UPDATE "queue_entries"
          SET status = 'IN_PROGRESS',
              started_at = CURRENT_TIMESTAMP
          WHERE id = $1
@@ -400,6 +428,7 @@ export async function startServingService(
 
     return {
         ...updated,
+        type: updated?.queue_type,
         visitId: updated?.visit_id,
         visit_id: updated?.visit_id,
     };
@@ -407,7 +436,7 @@ export async function startServingService(
 
 export async function completeQueueEntryService(queueEntryId: string, doctorId?: string) {
     const checkRes = await pool.query<QueueEntryRow>(
-        'SELECT id, doctor_id, status, visit_id FROM "QueueEntry" WHERE id = $1',
+        'SELECT id, doctor_id, status, visit_id FROM "queue_entries" WHERE id = $1',
         [queueEntryId]
     );
 
@@ -420,7 +449,7 @@ export async function completeQueueEntryService(queueEntryId: string, doctorId?:
     }
 
     const updateRes = await pool.query<QueueEntryRow>(
-        `UPDATE "QueueEntry"
+        `UPDATE "queue_entries"
          SET status = 'COMPLETED',
              completed_at = CURRENT_TIMESTAMP
          WHERE id = $1
@@ -431,6 +460,7 @@ export async function completeQueueEntryService(queueEntryId: string, doctorId?:
     const updated = updateRes.rows[0];
     return {
         ...updated,
+        type: updated?.queue_type,
         visitId: updated?.visit_id,
         visit_id: updated?.visit_id,
     };
@@ -438,7 +468,7 @@ export async function completeQueueEntryService(queueEntryId: string, doctorId?:
 
 export async function skipQueueEntryService(queueEntryId: string, doctorId?: string) {
     const checkRes = await pool.query<QueueEntryRow>(
-        'SELECT id, doctor_id, status, visit_id FROM "QueueEntry" WHERE id = $1',
+        'SELECT id, doctor_id, status, visit_id FROM "queue_entries" WHERE id = $1',
         [queueEntryId]
     );
 
@@ -451,7 +481,7 @@ export async function skipQueueEntryService(queueEntryId: string, doctorId?: str
     }
 
     const updateRes = await pool.query<QueueEntryRow>(
-        `UPDATE "QueueEntry"
+        `UPDATE "queue_entries"
          SET status = 'SKIPPED'
          WHERE id = $1
          RETURNING *`,
@@ -461,6 +491,7 @@ export async function skipQueueEntryService(queueEntryId: string, doctorId?: str
     const updated = updateRes.rows[0];
     return {
         ...updated,
+        type: updated?.queue_type,
         visitId: updated?.visit_id,
         visit_id: updated?.visit_id,
     };
@@ -472,29 +503,30 @@ export async function getMyPatientQueueStatusService(userId: string) {
             q.id,
             q.visit_id,
             q.visit_id as "visitId",
-            q.patient_id,
-            q.patient_id as "patientId",
+            v.patient_id,
+            v.patient_id as "patientId",
             p.name as patient_name,
             q.doctor_id,
             q.doctor_id as "doctorId",
-            COALESCE(u.name, d.name) as doctor_name,
+            u.name as doctor_name,
             d.specialization as doctor_specialization,
-            COALESCE(dept.name, d.department) as department_name,
-            q.type,
+            dept.name as department_name,
+            CASE WHEN q.priority >= 10 THEN 'EMERGENCY' ELSE q.queue_type::text END as type,
             q.priority,
             q.status,
+            q.token_number,
             q.joined_at,
-            q.scheduled_time,
             q.started_at,
             q.called_at
-         FROM "QueueEntry" q
-         JOIN "Patient" p ON q.patient_id = p.id
-         LEFT JOIN "Doctor" d ON q.doctor_id = d.id
-         LEFT JOIN "Staff" s ON d.staff_id = s.id
-         LEFT JOIN "User" u ON s.user_id = u.id
-         LEFT JOIN "Department" dept ON q.department_id = dept.id
+         FROM "queue_entries" q
+         JOIN "visits" v ON q.visit_id = v.id
+         JOIN "patient_profiles" p ON v.patient_id = p.id
+         LEFT JOIN "doctors" d ON q.doctor_id = d.id
+         LEFT JOIN "staff_profiles" s ON d.staff_id = s.id
+         LEFT JOIN "users" u ON s.user_id = u.id
+         LEFT JOIN "departments" dept ON q.department_id = dept.id
          WHERE p.owner_user_id = $1
-           AND q.status IN ('WAITING', 'CALLED', 'IN_PROGRESS', 'SERVING')
+           AND q.status IN ('WAITING', 'CALLED', 'IN_PROGRESS')
          ORDER BY q.joined_at DESC
          LIMIT 1`,
         [userId]
@@ -513,10 +545,10 @@ export async function getMyPatientQueueStatusService(userId: string) {
     const entry = res.rows[0];
     const position = await calculateQueuePosition(entry.doctor_id, entry.priority, entry.joined_at);
 
-    // Calculate waiting count for this doctor / queue
+    // Calculate waiting count for this doctor
     const waitingRes = await pool.query<{ count: string }>(
         `SELECT COUNT(*) as count
-         FROM "QueueEntry"
+         FROM "queue_entries"
          WHERE status = 'WAITING'
            AND (($1::uuid IS NULL AND doctor_id IS NULL) OR doctor_id = $1::uuid)`,
         [entry.doctor_id]
@@ -529,19 +561,20 @@ export async function getMyPatientQueueStatusService(userId: string) {
             q.id,
             q.visit_id,
             q.visit_id as "visitId",
-            q.patient_id,
+            v.patient_id,
             p.name as patient_name,
             q.doctor_id,
-            COALESCE(u.name, d.name) as doctor_name,
+            u.name as doctor_name,
             q.status
-         FROM "QueueEntry" q
-         JOIN "Patient" p ON q.patient_id = p.id
-         LEFT JOIN "Doctor" d ON q.doctor_id = d.id
-         LEFT JOIN "Staff" s ON d.staff_id = s.id
-         LEFT JOIN "User" u ON s.user_id = u.id
+         FROM "queue_entries" q
+         JOIN "visits" v ON q.visit_id = v.id
+         JOIN "patient_profiles" p ON v.patient_id = p.id
+         LEFT JOIN "doctors" d ON q.doctor_id = d.id
+         LEFT JOIN "staff_profiles" s ON d.staff_id = s.id
+         LEFT JOIN "users" u ON s.user_id = u.id
          WHERE (($1::uuid IS NULL AND q.doctor_id IS NULL) OR q.doctor_id = $1::uuid)
-           AND q.status IN ('IN_PROGRESS', 'SERVING', 'CALLED')
-         ORDER BY CASE WHEN q.status IN ('IN_PROGRESS', 'SERVING') THEN 1 ELSE 2 END, q.started_at DESC NULLS LAST
+           AND q.status IN ('IN_PROGRESS', 'CALLED')
+         ORDER BY CASE WHEN q.status = 'IN_PROGRESS' THEN 1 ELSE 2 END, q.started_at DESC NULLS LAST
          LIMIT 1`,
         [entry.doctor_id]
     );

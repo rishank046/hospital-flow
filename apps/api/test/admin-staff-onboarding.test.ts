@@ -55,8 +55,8 @@ describe("Admin Staff Onboarding Flow", { timeout: 30000 }, () => {
         // Seed Admin user
         const hashedAdminPassword = await bcrypt.hash(adminPassword, 10);
         const adminRes = await pool.query(
-            `INSERT INTO "Admin" (name, email, password)
-             VALUES ($1, $2, $3)
+            `INSERT INTO "users" (name, email, password, role)
+             VALUES ($1, $2, $3, 'ADMIN')
              RETURNING id, name, email`,
             ["Onboarding Admin", adminEmail, hashedAdminPassword]
         );
@@ -76,13 +76,13 @@ describe("Admin Staff Onboarding Flow", { timeout: 30000 }, () => {
         }
 
         if (emails.length > 0) {
-            await pool.query('DELETE FROM "Doctor" WHERE email = ANY($1)', [emails]);
-            await pool.query('DELETE FROM "Staff" WHERE user_id IN (SELECT id FROM "User" WHERE email = ANY($1))', [emails]);
-            await pool.query('DELETE FROM "User" WHERE email = ANY($1)', [emails]);
+            await pool.query('DELETE FROM "doctors" WHERE staff_id IN (SELECT id FROM "staff_profiles" WHERE user_id IN (SELECT id FROM "users" WHERE email = ANY($1)))', [emails]);
+            await pool.query('DELETE FROM "staff_profiles" WHERE user_id IN (SELECT id FROM "users" WHERE email = ANY($1))', [emails]);
+            await pool.query('DELETE FROM "users" WHERE email = ANY($1)', [emails]);
         }
 
         if (adminId) {
-            await pool.query('DELETE FROM "Admin" WHERE id = $1', [adminId]);
+            await pool.query('DELETE FROM "users" WHERE id = $1', [adminId]);
         }
 
         if (server) {
@@ -152,7 +152,11 @@ describe("Admin Staff Onboarding Flow", { timeout: 30000 }, () => {
         expect(doctorEntry).toBeDefined();
 
         const docRes = await pool.query(
-            'SELECT * FROM "Doctor" WHERE staff_id = $1',
+            `SELECT d.*, u.email 
+             FROM "doctors" d 
+             JOIN "staff_profiles" s ON d.staff_id = s.id 
+             JOIN "users" u ON s.user_id = u.id 
+             WHERE d.staff_id = $1`,
             [doctorEntry!.staffId]
         );
 
@@ -233,7 +237,7 @@ describe("Admin Staff Onboarding Flow", { timeout: 30000 }, () => {
         expect(leaveData.status).toBe("ON_LEAVE");
 
         const leaveStaffCheck = await pool.query(
-            'SELECT status FROM "Staff" WHERE id = $1',
+            'SELECT status FROM "staff_profiles" WHERE id = $1',
             [nurseEntry.staffId]
         );
         expect(leaveStaffCheck.rows[0].status).toBe("ON_LEAVE");
@@ -254,14 +258,14 @@ describe("Admin Staff Onboarding Flow", { timeout: 30000 }, () => {
 
         // Verify Staff table status
         const staffCheck = await pool.query(
-            'SELECT status FROM "Staff" WHERE id = $1',
+            'SELECT status FROM "staff_profiles" WHERE id = $1',
             [nurseEntry.staffId]
         );
         expect(staffCheck.rows[0].status).toBe("INACTIVE");
 
         // Verify User table is_active is flipped to false
         const userCheck = await pool.query(
-            'SELECT is_active FROM "User" WHERE id = $1',
+            'SELECT is_active FROM "users" WHERE id = $1',
             [nurseEntry.userId]
         );
         expect(userCheck.rows[0].is_active).toBe(false);
