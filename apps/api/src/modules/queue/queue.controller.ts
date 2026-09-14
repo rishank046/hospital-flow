@@ -26,8 +26,9 @@ async function getDoctorId(request: Request): Promise<string> {
 }
 
 export async function joinQueue(request: Request, response: Response) {
+    const authUser = request.user || request.tokenPayload;
     const parsed = joinQueueSchema.parse(request.body);
-    const result = await joinQueueService(parsed);
+    const result = await joinQueueService(parsed, authUser);
     response.status(201).json(result);
 }
 
@@ -49,8 +50,9 @@ export async function callNext(request: Request, response: Response) {
 
 export async function startServing(request: Request, response: Response) {
     const doctorId = await getDoctorId(request);
+    const authUser = request.user || request.tokenPayload;
     const { queueEntryId } = queueEntryIdParamSchema.parse(request.params);
-    const result = await startServingService(queueEntryId, doctorId);
+    const result = await startServingService(queueEntryId, doctorId, authUser);
     response.status(200).json(result);
 }
 

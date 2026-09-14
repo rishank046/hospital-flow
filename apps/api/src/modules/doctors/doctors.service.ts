@@ -1,7 +1,6 @@
-import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
 import pool from "#database/pool.js";
 import { AppError } from "#utils/errorHandler.js";
+import { loginService } from "#modules/auth/auth.service.js";
 import type {
     CreateConsultationInput,
     CreateInvestigationOrderInput,
@@ -18,21 +17,6 @@ interface DoctorRow {
     specialization: string;
     department?: string | null;
     created_at: Date;
-}
-
-function getJwtSecret(): string {
-    const jwtSecret = process.env.JWT_SECRET;
-    const normalizedSecret = jwtSecret?.toLowerCase();
-    if (
-        !jwtSecret ||
-        jwtSecret.length < 32 ||
-        normalizedSecret === "default_secret" ||
-        normalizedSecret === "your_jwt_secret_key_minimum_32_chars" ||
-        normalizedSecret === "replace_with_a_random_64_char_secret"
-    ) {
-        throw new AppError("JWT secret is not configured or too weak", 500);
-    }
-    return jwtSecret;
 }
 
 export async function resolveDoctorId(userIdOrDoctorId: string): Promise<string> {
@@ -63,104 +47,9 @@ export async function resolveDoctorId(userIdOrDoctorId: string): Promise<string>
 }
 
 export async function doctorLoginService(data: DoctorLoginInput) {
-    // 1. Check User table joined with Staff and Doctor
-    const staffUserRes = await pool.query(
-        `SELECT 
-            u.id as user_id, 
-            u.name, 
-            u.email, 
-            u.password, 
-            s.id as staff_id,
-            s.role as staff_role,
-            s.status as staff_status,
-            d.id as doctor_id, 
-            d.specialization, 
-            COALESCE(dept.name, d.department) as department,
-            d.created_at
-         FROM "User" u
-         JOIN "Staff" s ON s.user_id = u.id
-         JOIN "Doctor" d ON d.staff_id = s.id
-         LEFT JOIN "Department" dept ON d.department_id = dept.id
-         WHERE u.email = $1`,
-        [data.email]
-    );
-
-    if (staffUserRes.rowCount && staffUserRes.rows[0]) {
-        const row = staffUserRes.rows[0];
-        if (row.staff_status !== "ACTIVE") {
-            throw new AppError("Doctor staff account is inactive", 403);
-        }
-        const passwordMatch = await bcrypt.compare(data.password, row.password);
-        if (!passwordMatch) {
-            throw new AppError("Invalid email or password", 401);
-        }
-
-        const jwtSecret = getJwtSecret();
-        const token = jwt.sign(
-            {
-                userId: row.user_id,
-                email: row.email,
-                role: "STAFF",
-                staffRole: "DOCTOR",
-            },
-            jwtSecret,
-            { expiresIn: "8h" }
-        );
-
-        return {
-            token,
-            doctor: {
-                id: row.doctor_id,
-                name: row.name,
-                email: row.email,
-                specialization: row.specialization,
-                department: row.department,
-                createdAt: row.created_at,
-            },
-        };
-    }
-
-    // 2. Direct Doctor table fallback (for legacy seed)
-    const result = await pool.query<DoctorRow>(
-        'SELECT id, name, email, password, specialization, department, created_at FROM "Doctor" WHERE email = $1',
-        [data.email]
-    );
-
-    const doctor = result.rows[0];
-    if (!doctor || !doctor.password) {
-        throw new AppError("Invalid email or password", 401);
-    }
-
-    const passwordMatch = await bcrypt.compare(data.password, doctor.password);
-
-    if (!passwordMatch) {
-        throw new AppError("Invalid email or password", 401);
-    }
-
-    const jwtSecret = getJwtSecret();
-    const token = jwt.sign(
-        {
-            userId: doctor.id,
-            email: doctor.email ?? data.email,
-            role: "STAFF",
-            staffRole: "DOCTOR",
-        },
-        jwtSecret,
-        { expiresIn: "8h" }
-    );
-
-    return {
-        token,
-        doctor: {
-            id: doctor.id,
-            name: doctor.name ?? "Doctor",
-            email: doctor.email ?? data.email,
-            specialization: doctor.specialization,
-            department: doctor.department ?? "General",
-            createdAt: doctor.created_at,
-        },
-    };
+    return loginService(data.email, data.password);
 }
+
 
 export async function listPublicDoctorsService() {
     const result = await pool.query(
@@ -360,141 +249,12 @@ export async function getDoctorPatientDetailsService(doctorId: string, patientId
     };
 }
 
-export async function createConsultationService(
-    doctorId: string,
-    patientId: string,
-    data: CreateConsultationInput
-) {
-    const patientRes = await pool.query('SELECT id FROM "Patient" WHERE id = $1', [patientId]);
-    if (patientRes.rowCount === 0) {
-        throw new AppError("Patient not found", 404);
-    }
+export {
+    createConsultationService,
+    updateConsultationService,
+} from "#modules/consultations/consultations.service.js";
 
-    const consultRes = await pool.query(
-        `INSERT INTO "Consultation" (doctor_id, patient_id, appointment_id, diagnosis, notes, treatment_plan)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING *`,
-        [
-            doctorId,
-            patientId,
-            data.appointmentId ?? null,
-            data.diagnosis,
-            data.notes ?? null,
-            data.treatmentPlan ?? null,
-        ]
-    );
-
-    const consultation = consultRes.rows[0];
-    const createdPrescriptions: unknown[] = [];
-
-    if (data.prescriptions && data.prescriptions.length > 0) {
-        for (const item of data.prescriptions) {
-            const presRes = await pool.query(
-                `INSERT INTO "Prescription" (consultation_id, patient_id, doctor_id, medication, dosage, frequency, duration, instructions)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                 RETURNING *`,
-                [
-                    consultation.id,
-                    patientId,
-                    doctorId,
-                    item.medication,
-                    item.dosage,
-                    item.frequency ?? null,
-                    item.duration ?? null,
-                    item.instructions ?? null,
-                ]
-            );
-            createdPrescriptions.push(presRes.rows[0]);
-        }
-    }
-
-    return {
-        ...consultation,
-        prescriptions: createdPrescriptions,
-    };
-}
-
-export async function updateConsultationService(
-    doctorId: string,
-    consultationId: string,
-    data: UpdateConsultationInput
-) {
-    const consultRes = await pool.query(
-        'SELECT id, doctor_id, diagnosis, notes, treatment_plan FROM "Consultation" WHERE id = $1',
-        [consultationId]
-    );
-
-    if (consultRes.rowCount === 0 || !consultRes.rows[0]) {
-        throw new AppError("Consultation not found", 404);
-    }
-
-    const existing = consultRes.rows[0];
-    if (existing.doctor_id !== doctorId) {
-        throw new AppError("You are not authorized to update this consultation", 403);
-    }
-
-    const updateRes = await pool.query(
-        `UPDATE "Consultation"
-         SET diagnosis = $1,
-             notes = $2,
-             treatment_plan = $3,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = $4
-         RETURNING *`,
-        [
-            data.diagnosis ?? existing.diagnosis,
-            data.notes ?? existing.notes,
-            data.treatmentPlan ?? existing.treatment_plan,
-            consultationId,
-        ]
-    );
-
-    return updateRes.rows[0];
-}
-
-export async function createInvestigationOrderService(
-    doctorId: string,
-    patientId: string,
-    data: CreateInvestigationOrderInput
-) {
-    const patientRes = await pool.query('SELECT id FROM "Patient" WHERE id = $1', [patientId]);
-    if (patientRes.rowCount === 0) {
-        throw new AppError("Patient not found", 404);
-    }
-
-    const orderRes = await pool.query(
-        `INSERT INTO "InvestigationOrder" (patient_id, doctor_id, test_name, instructions, status)
-         VALUES ($1, $2, $3, $4, 'PENDING')
-         RETURNING *`,
-        [patientId, doctorId, data.testName, data.instructions ?? null]
-    );
-
-    return orderRes.rows[0];
-}
-
-export async function getPatientReportsService(doctorId: string, patientId: string) {
-    const patientRes = await pool.query('SELECT id FROM "Patient" WHERE id = $1', [patientId]);
-    if (patientRes.rowCount === 0) {
-        throw new AppError("Patient not found", 404);
-    }
-
-    const reportsRes = await pool.query(
-        `SELECT 
-            r.id,
-            r.test_name,
-            r.instructions,
-            r.status,
-            r.result,
-            r.created_at,
-            r.updated_at,
-            d.id as doctor_id,
-            d.name as doctor_name
-         FROM "InvestigationOrder" r
-         JOIN "Doctor" d ON r.doctor_id = d.id
-         WHERE r.patient_id = $1
-         ORDER BY r.created_at DESC`,
-        [patientId]
-    );
-
-    return { reports: reportsRes.rows };
-}
+export {
+    createInvestigationOrderService,
+    getPatientReportsService,
+} from "#modules/lab-orders/lab-orders.service.js";

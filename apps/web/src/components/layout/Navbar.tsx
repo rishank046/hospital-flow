@@ -8,7 +8,7 @@ export interface NavbarProps {
 }
 
 export function Navbar({ isSidebarOpen = false, onToggleSidebar }: NavbarProps = {}) {
-  const { user, role, logout } = useAuth();
+  const { user, role, staffRole, logout } = useAuth();
   const [time, setTime] = useState(() => new Date());
 
   useEffect(() => {
@@ -18,7 +18,27 @@ export function Navbar({ isSidebarOpen = false, onToggleSidebar }: NavbarProps =
     return () => clearInterval(timer);
   }, []);
 
-  const displayName = user?.name || (role === 'DOCTOR' ? 'Doctor' : 'Patient');
+  const isDoctor = role === 'DOCTOR' || (role === 'STAFF' && staffRole === 'DOCTOR');
+  const isAdmin = role === 'ADMIN';
+  const isStaff = role === 'STAFF' && !isDoctor;
+
+  const displayName =
+    user?.name ||
+    (isDoctor
+      ? 'Doctor'
+      : isAdmin
+      ? 'Admin'
+      : isStaff
+      ? 'Staff'
+      : 'Patient');
+
+  const homeHref = isDoctor
+    ? '/doctor/dashboard'
+    : isAdmin
+    ? '/admin/dashboard'
+    : isStaff
+    ? '/staff/dashboard'
+    : '/patient/dashboard';
 
   return (
     <header className="app-navbar">
@@ -36,7 +56,7 @@ export function Navbar({ isSidebarOpen = false, onToggleSidebar }: NavbarProps =
             <span className="hamburger-bar" />
           </button>
         )}
-        <a href={role === 'DOCTOR' ? '/doctor' : '/patient'} className="brand-link">
+        <a href={homeHref} className="brand-link">
           <div className="brand-mark" aria-hidden="true">
             <span />
             <span />
@@ -58,8 +78,8 @@ export function Navbar({ isSidebarOpen = false, onToggleSidebar }: NavbarProps =
       <div className="navbar-actions">
         <div className="user-profile-info">
           <span className="user-greeting">Welcome, <strong>{displayName}</strong></span>
-          <Badge variant={role === 'DOCTOR' ? 'primary' : 'success'} size="sm">
-            {role ?? 'USER'}
+          <Badge variant={isDoctor ? 'primary' : isAdmin ? 'warning' : isStaff ? 'primary' : 'success'} size="sm">
+            {staffRole || role || 'USER'}
           </Badge>
         </div>
 

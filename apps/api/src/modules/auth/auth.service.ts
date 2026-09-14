@@ -1,20 +1,21 @@
 import bcrypt from "bcrypt";
-import pool from "../../database/pool.js";
 import jwt from "jsonwebtoken";
+import pool from "#database/pool.js";
 import { revokeToken } from "#utils/tokenRevocation.js";
 import { AppError } from "#utils/errorHandler.js";
+import type { StaffRole } from "#types/auth.types.js";
 
 const SALT_ROUNDS = 10;
 
-type LoginResult = {
+export type LoginResult = {
     token: string;
-    user?: {
+    user: {
         id: string;
         name: string;
         email: string;
-        role: string;
-        staffRole?: string | undefined;
-    } | undefined;
+        role: "PATIENT" | "STAFF" | "ADMIN";
+        staffRole?: StaffRole | undefined;
+    };
     staff?: {
         id: string;
         employeeCode: string;
@@ -28,14 +29,19 @@ type LoginResult = {
         specialization?: string | undefined;
         department?: string | undefined;
     } | undefined;
+    admin?: {
+        id: string;
+        name: string;
+        email: string;
+    } | undefined;
 };
 
-type RegisterResult = {
-	email: string;
+export type RegisterResult = {
+    email: string;
 };
 
-type LogoutResult = {
-	message: string;
+export type LogoutResult = {
+    message: string;
 };
 
 export async function loginService(email: string, password: string): Promise<LoginResult> {
@@ -51,95 +57,113 @@ export async function loginService(email: string, password: string): Promise<Log
         throw new AppError("JWT secret is not configured or too weak", 500);
     }
 
-    // 1. Look up User
+    // 1. Look up by email in users joined with staff_profiles
     const userResult = await pool.query(
-        'SELECT id, name, email, password, role FROM "User" WHERE email = $1',
+        `SELECT 
+            u.id, 
+            u.name, 
+            u.email, 
+            u.password, 
+            u.role,
+            u.is_active,
+            sp.id as staff_id,
+            sp.employee_code,
+            sp.role as staff_role,
+            sp.status as staff_status,
+            d.id as doctor_id, 
+            d.specialization, 
+            COALESCE(dept.name, d.department) as department
+         FROM users u
+         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+         LEFT JOIN "Doctor" d ON d.staff_id = sp.id
+         LEFT JOIN "Department" dept ON d.department_id = dept.id
+         WHERE u.email = $1`,
         [email]
     );
 
     if (userResult.rowCount && userResult.rows[0]) {
-        const user = userResult.rows[0];
-        const passwordMatch = await bcrypt.compare(password, user.password);
+        const row = userResult.rows[0];
+        const passwordMatch = await bcrypt.compare(password, row.password);
         if (!passwordMatch) {
             throw new AppError("Invalid email or password", 401);
         }
 
-        // Check for Staff membership
-        const staffRes = await pool.query(
-            `SELECT 
-                s.id as staff_id, 
-                s.employee_code, 
-                s.role as staff_role, 
-                s.status as staff_status,
-                d.id as doctor_id, 
-                d.specialization, 
-                COALESCE(dept.name, d.department) as department
-             FROM "Staff" s
-             LEFT JOIN "Doctor" d ON d.staff_id = s.id
-             LEFT JOIN "Department" dept ON d.department_id = dept.id
-             WHERE s.user_id = $1`,
-            [user.id]
-        );
+        if (row.is_active === false || (row.role === "STAFF" && row.staff_status === "INACTIVE")) {
+            throw new AppError("Account is inactive", 403);
+        }
 
-        if (staffRes.rowCount && staffRes.rows[0]) {
-            const staffRow = staffRes.rows[0];
-            const token = jwt.sign(
-                {
-                    userId: user.id,
-                    email: user.email,
-                    role: "STAFF",
-                    staffRole: staffRow.staff_role,
-                },
-                jwtSecret,
-                { expiresIn: "4h" }
-            );
+        const rawRole = String(row.role ?? "PATIENT").toUpperCase();
+        let role: "PATIENT" | "STAFF" | "ADMIN" = "PATIENT";
+        let staffRole: StaffRole | undefined = undefined;
 
-            return {
-                token,
-                user: {
-                    id: user.id,
-                    name: user.name,
-                    email: user.email,
-                    role: "STAFF",
-                    staffRole: staffRow.staff_role,
-                },
-                staff: {
-                    id: staffRow.staff_id,
-                    employeeCode: staffRow.employee_code,
-                    role: staffRow.staff_role,
-                    status: staffRow.staff_status,
-                },
-                doctor: staffRow.doctor_id
-                    ? {
-                          id: staffRow.doctor_id,
-                          name: user.name,
-                          email: user.email,
-                          specialization: staffRow.specialization,
-                          department: staffRow.department,
-                      }
-                    : undefined,
+        if (rawRole === "ADMIN") {
+            role = "ADMIN";
+        } else if (rawRole === "STAFF" || row.staff_id) {
+            role = "STAFF";
+            staffRole = (row.staff_role as StaffRole) || (row.doctor_id ? "DOCTOR" : undefined);
+        } else {
+            role = "PATIENT";
+        }
+
+        const tokenPayload: {
+            userId: string;
+            email: string;
+            role: "PATIENT" | "STAFF" | "ADMIN";
+            staffRole?: StaffRole;
+        } = {
+            userId: row.id,
+            email: row.email,
+            role,
+        };
+
+        if (role === "STAFF" && staffRole) {
+            tokenPayload.staffRole = staffRole;
+        }
+
+        const token = jwt.sign(tokenPayload, jwtSecret, { expiresIn: "4h" });
+
+        const result: LoginResult = {
+            token,
+            user: {
+                id: row.id,
+                name: row.name,
+                email: row.email,
+                role,
+                ...(role === "STAFF" && staffRole ? { staffRole } : {}),
+            },
+        };
+
+        if (row.staff_id) {
+            result.staff = {
+                id: row.staff_id,
+                employeeCode: row.employee_code,
+                role: row.staff_role,
+                status: row.staff_status,
             };
         }
 
-        const role = user.role === "ADMIN" ? "ADMIN" : "USER";
-        const token = jwt.sign(
-            { userId: user.id, email: user.email, role },
-            jwtSecret,
-            { expiresIn: "4h" }
-        );
+        if (row.doctor_id) {
+            result.doctor = {
+                id: row.doctor_id,
+                name: row.name,
+                email: row.email,
+                specialization: row.specialization,
+                department: row.department,
+            };
+        }
 
-        return {
-            token,
-            user: {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                role,
-            },
-        };
+        if (role === "ADMIN") {
+            result.admin = {
+                id: row.id,
+                name: row.name,
+                email: row.email,
+            };
+        }
+
+        return result;
     }
 
-    // 2. Fallback check for Admin table
+    // 2. Fallback check for Admin table (legacy)
     const adminResult = await pool.query(
         'SELECT id, name, email, password FROM "Admin" WHERE email = $1',
         [email]
@@ -165,6 +189,11 @@ export async function loginService(email: string, password: string): Promise<Log
                 name: admin.name,
                 email: admin.email,
                 role: "ADMIN",
+            },
+            admin: {
+                id: admin.id,
+                name: admin.name,
+                email: admin.email,
             },
         };
     }
@@ -215,29 +244,54 @@ export async function loginService(email: string, password: string): Promise<Log
     throw new AppError("Invalid email or password", 401);
 }
 
-export async function registerService(name: string, email: string, password: string): Promise<RegisterResult> {
-	const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
+export async function registerService(
+    name: string,
+    email: string,
+    password: string,
+    role?: string
+): Promise<RegisterResult> {
+    if (role) {
+        const normalized = role.toUpperCase();
+        if (normalized === "STAFF" || normalized === "ADMIN" || normalized === "DOCTOR") {
+            throw new AppError("Registration with role STAFF or ADMIN is not permitted", 400);
+        }
+    }
 
-	const result = await pool.query(
-		'INSERT INTO "User" (name, email, password) VALUES ($1, $2, $3) RETURNING id, email',
-		[name, email, hashedPassword],
-	);
+    const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
-	if (result.rowCount === 0 || !result.rows[0]) {
-		throw new Error("Failed to register user");
-	}
+    try {
+        const result = await pool.query(
+            "INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, 'PATIENT') RETURNING id, email",
+            [name, email, hashedPassword],
+        );
 
-	return { email: result.rows[0].email };
+        if (result.rowCount === 0 || !result.rows[0]) {
+            throw new AppError("Failed to register user", 500);
+        }
+
+        return { email: result.rows[0].email };
+    } catch (err: unknown) {
+        if (err instanceof AppError) throw err;
+        if (
+            typeof err === "object" &&
+            err !== null &&
+            "code" in err &&
+            (err as { code: string }).code === "23505"
+        ) {
+            throw new AppError("User with this email already exists", 409);
+        }
+        throw err;
+    }
 }
 
 export async function logoutService(token: string): Promise<LogoutResult> {
-	const decodedToken = jwt.decode(token);
+    const decodedToken = jwt.decode(token);
 
-	if (!decodedToken || typeof decodedToken === "string" || typeof decodedToken.exp !== "number") {
-		throw new Error("Invalid token");
-	}
+    if (!decodedToken || typeof decodedToken === "string" || typeof decodedToken.exp !== "number") {
+        throw new AppError("Invalid token", 400);
+    }
 
-	revokeToken(token, decodedToken.exp * 1000);
+    revokeToken(token, decodedToken.exp * 1000);
 
-	return { message: "Logged out successfully" };
+    return { message: "Logged out successfully" };
 }

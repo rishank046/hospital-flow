@@ -43,9 +43,9 @@ export async function authenticate(
         );
 
         const payload = decodedToken as Record<string, unknown>;
-        const rawRole = String(payload["role"] ?? "USER").toUpperCase();
+        const rawRole = String(payload["role"] ?? "PATIENT").toUpperCase();
         
-        let role: SystemRole = "USER";
+        let role: SystemRole = "PATIENT";
         let staffRole: StaffRole | undefined = typeof payload["staffRole"] === "string" 
             ? (payload["staffRole"] as StaffRole) 
             : undefined;
@@ -54,11 +54,11 @@ export async function authenticate(
             role = "ADMIN";
         } else if (rawRole === "STAFF" || rawRole === "DOCTOR") {
             role = "STAFF";
-            if (rawRole === "DOCTOR") {
+            if (rawRole === "DOCTOR" && !staffRole) {
                 staffRole = "DOCTOR";
             }
         } else {
-            role = "USER";
+            role = "PATIENT";
         }
 
         const userId = String(payload["userId"] ?? payload["id"] ?? "");
@@ -68,7 +68,7 @@ export async function authenticate(
             userId,
             email,
             role,
-            staffRole,
+            ...(staffRole ? { staffRole } : {}),
         };
 
         request.user = authData;
@@ -96,8 +96,8 @@ export const requireRole = (
     }
 
     const userRole = user.role;
-    const isPatientMatch = (role === "PATIENT" || role === "USER") && userRole === "USER";
-    const isDoctorMatch = role === "DOCTOR" && (userRole === "STAFF" && (user.staffRole === "DOCTOR" || !user.staffRole));
+    const isPatientMatch = (role === "PATIENT" || role === "USER") && (userRole === "PATIENT" || userRole === "USER");
+    const isDoctorMatch = role === "DOCTOR" && userRole === "STAFF" && user.staffRole === "DOCTOR";
     const isStaffMatch = role === "STAFF" && userRole === "STAFF";
     const isExactMatch = (userRole as string) === role;
 
@@ -127,7 +127,16 @@ export const requireStaffRole = (
         return;
     }
 
-    // Look up Staff record for this User
+    // Check staffRole directly from token payload
+    if (user.staffRole) {
+        if (allowedRoles.length > 0 && !allowedRoles.includes(user.staffRole)) {
+            response.status(403).json({ message: "Forbidden: insufficient staff role" });
+            return;
+        }
+        return next();
+    }
+
+    // Fallback: Look up Staff record for this User
     try {
         const staffRes = await pool.query<{ role: StaffRole; status: string }>(
             'SELECT role, status FROM "Staff" WHERE user_id = $1',

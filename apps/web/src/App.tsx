@@ -4,7 +4,6 @@ import { useAuth } from './hooks/useAuth';
 import { ProtectedRoute } from './components/layout/ProtectedRoute';
 import { LoginPage } from './pages/auth/LoginPage';
 import { RegisterPage } from './pages/auth/RegisterPage';
-import { DoctorLoginPage } from './pages/auth/DoctorLoginPage';
 import { PatientDashboard } from './pages/patient/PatientDashboard';
 import { PatientAppointmentsPage } from './pages/patient/PatientAppointmentsPage';
 import { PatientJourneyPage } from './pages/patient/PatientJourneyPage';
@@ -14,7 +13,12 @@ import { DoctorDashboard } from './pages/doctor/DoctorDashboard';
 import { DoctorSchedulePage } from './pages/doctor/DoctorSchedulePage';
 import { DoctorPatientsPage } from './pages/doctor/DoctorPatientsPage';
 import { DoctorPatientDetailPage } from './pages/doctor/DoctorPatientDetailPage';
-import { StaffPortalPage } from './pages/staff/StaffPortalPage';
+import { StaffDashboardPage } from './pages/staff/StaffDashboardPage';
+import { AdminDashboardPage } from './pages/admin/AdminDashboardPage';
+import { AdminStaffPage } from './pages/admin/AdminStaffPage';
+import { AdminStaffDetailPage } from './pages/admin/AdminStaffDetailPage';
+import { AdminDoctorsPage } from './pages/admin/AdminDoctorsPage';
+import { AdminPatientsPage } from './pages/admin/AdminPatientsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import './App.css';
 
@@ -38,10 +42,27 @@ function Router() {
           </ProtectedRoute>
         );
       }
-      if (role === 'STAFF') {
+      if (role === 'ADMIN') {
         return (
-          <ProtectedRoute allowedRoles={['STAFF']}>
-            <StaffPortalPage />
+          <ProtectedRoute allowedRoles={['ADMIN']}>
+            <AdminDashboardPage />
+          </ProtectedRoute>
+        );
+      }
+      if (role === 'STAFF') {
+        if (staffRole === 'DOCTOR') {
+          return (
+            <ProtectedRoute allowedRoles={['DOCTOR', 'STAFF']}>
+              <DoctorDashboard />
+            </ProtectedRoute>
+          );
+        }
+        return (
+          <ProtectedRoute
+            allowedRoles={['STAFF']}
+            allowedStaffRoles={['NURSE', 'PHARMACIST', 'LAB_TECH', 'RECEPTIONIST', 'BILLING_CLERK', 'LAB_STAFF']}
+          >
+            <StaffDashboardPage />
           </ProtectedRoute>
         );
       }
@@ -59,7 +80,8 @@ function Router() {
   }
 
   if (path === '/doctor/login') {
-    return <DoctorLoginPage />;
+    window.history.replaceState({}, '', '/login');
+    return <LoginPage />;
   }
 
   // Patient protected routes
@@ -103,11 +125,64 @@ function Router() {
     );
   }
 
+  // Admin protected routes
+  if (path === '/admin' || path === '/admin/dashboard') {
+    return (
+      <ProtectedRoute allowedRoles={['ADMIN']}>
+        <AdminDashboardPage />
+      </ProtectedRoute>
+    );
+  }
+
+  if (path === '/admin/staff') {
+    return (
+      <ProtectedRoute allowedRoles={['ADMIN']}>
+        <AdminStaffPage />
+      </ProtectedRoute>
+    );
+  }
+
+  if (path.startsWith('/admin/staff/')) {
+    const staffId = path.replace('/admin/staff/', '').split('/')[0];
+    return (
+      <ProtectedRoute allowedRoles={['ADMIN']}>
+        <AdminStaffDetailPage staffId={staffId} />
+      </ProtectedRoute>
+    );
+  }
+
+  if (path === '/admin/doctors') {
+    return (
+      <ProtectedRoute allowedRoles={['ADMIN']}>
+        <AdminDoctorsPage />
+      </ProtectedRoute>
+    );
+  }
+
+  if (path === '/admin/patients') {
+    return (
+      <ProtectedRoute allowedRoles={['ADMIN']}>
+        <AdminPatientsPage />
+      </ProtectedRoute>
+    );
+  }
+
   // Staff protected routes
   if (path === '/staff' || path === '/staff/dashboard') {
+    if (staffRole === 'DOCTOR' || role === 'DOCTOR') {
+      window.history.replaceState({}, '', '/doctor/dashboard');
+      return (
+        <ProtectedRoute allowedRoles={['DOCTOR', 'STAFF']}>
+          <DoctorDashboard />
+        </ProtectedRoute>
+      );
+    }
     return (
-      <ProtectedRoute allowedRoles={['STAFF', 'DOCTOR']}>
-        <StaffPortalPage />
+      <ProtectedRoute
+        allowedRoles={['STAFF']}
+        allowedStaffRoles={['NURSE', 'PHARMACIST', 'LAB_TECH', 'RECEPTIONIST', 'BILLING_CLERK', 'LAB_STAFF']}
+      >
+        <StaffDashboardPage />
       </ProtectedRoute>
     );
   }

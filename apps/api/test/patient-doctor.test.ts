@@ -36,14 +36,30 @@ let emergencyQueueEntryId: string;
 let createdStaffId: string;
 let createdStaffUserId: string;
 let nurseToken: string;
+const nurseEmail = `nurse_${Date.now()}@example.com`;
+const nursePassword = "NursePassword123!";
+
+let autoPassStaffId: string;
+let autoPassStaffUserId: string;
+let autoPassTemporaryPassword: string;
+const autoPassStaffEmail = `autopass_staff_${Date.now()}@example.com`;
+
+let adminCreatedDocStaffId: string;
+let adminCreatedDocStaffUserId: string;
+const adminCreatedDocStaffEmail = `admin_created_doc_${Date.now()}@example.com`;
 
 let createdAdminDoctorId: string;
 let createdAdminDoctorUserId: string;
+const newDocEmail = `doc_admin_${Date.now()}@example.com`;
+const newDocPassword = "NewDoctorPassword123!";
+
+let regPatientEmail: string;
 
 let createdAppointmentId: string;
 let createdConsultationId: string;
 
 beforeAll(async () => {
+
     // Start ephemeral server
     await new Promise<void>((resolve) => {
         server = http.createServer(app);
@@ -143,11 +159,21 @@ afterAll(async () => {
         await pool.query('DELETE FROM "Staff" WHERE user_id = $1', [createdStaffUserId]);
         await pool.query('DELETE FROM "User" WHERE id = $1', [createdStaffUserId]);
     }
+    if (autoPassStaffUserId) {
+        await pool.query('DELETE FROM "Staff" WHERE user_id = $1', [autoPassStaffUserId]);
+        await pool.query('DELETE FROM "User" WHERE id = $1', [autoPassStaffUserId]);
+    }
+    if (adminCreatedDocStaffUserId) {
+        await pool.query('DELETE FROM "Doctor" WHERE email = $1', [adminCreatedDocStaffEmail]);
+        await pool.query('DELETE FROM "Staff" WHERE user_id = $1', [adminCreatedDocStaffUserId]);
+        await pool.query('DELETE FROM "User" WHERE id = $1', [adminCreatedDocStaffUserId]);
+    }
     if (secondPatientId) {
         await pool.query('DELETE FROM "QueueEntry" WHERE patient_id = $1', [secondPatientId]);
         await pool.query('DELETE FROM "Patient" WHERE id = $1', [secondPatientId]);
     }
     if (patientId) {
+        await pool.query('DELETE FROM "visits" WHERE patient_id = $1', [patientId]);
         await pool.query('DELETE FROM "QueueEntry" WHERE patient_id = $1', [patientId]);
         await pool.query('DELETE FROM "Prescription" WHERE consultation_id IN (SELECT id FROM "Consultation" WHERE patient_id = $1)', [patientId]);
         await pool.query('DELETE FROM "Consultation" WHERE patient_id = $1', [patientId]);
@@ -169,8 +195,13 @@ afterAll(async () => {
     if (adminId) {
         await pool.query('DELETE FROM "Admin" WHERE id = $1', [adminId]);
     }
+    if (regPatientEmail) {
+        await pool.query('DELETE FROM "Patient" WHERE owner_user_id IN (SELECT id FROM "User" WHERE email = $1)', [regPatientEmail]);
+        await pool.query('DELETE FROM "User" WHERE email = $1', [regPatientEmail]);
+    }
 
     await new Promise<void>((resolve) => server.close(() => resolve()));
+
     await pool.end();
 });
 
@@ -487,6 +518,8 @@ describe("Queue Lifecycle & Dynamic Prioritization", () => {
         expect(data.doctor_id).toBe(doctorId);
         expect(data.type).toBe("WALK_IN");
         expect(data.status).toBe("WAITING");
+        expect(data).toHaveProperty("visit_id");
+        expect(data.visit_id).toBeTruthy();
 
         walkInQueueEntryId = data.id;
     });
@@ -528,6 +561,8 @@ describe("Queue Lifecycle & Dynamic Prioritization", () => {
         expect(data.type).toBe("EMERGENCY");
         expect(data.priority).toBe(10);
         expect(data.status).toBe("WAITING");
+        expect(data).toHaveProperty("visit_id");
+        expect(data.visit_id).toBeTruthy();
 
         emergencyQueueEntryId = data.id;
     });
@@ -541,9 +576,12 @@ describe("Queue Lifecycle & Dynamic Prioritization", () => {
         const data = await res.json();
         expect(Array.isArray(data.queue)).toBe(true);
         expect(data.queue.length).toBeGreaterThanOrEqual(2);
+        expect(data).toHaveProperty("waitingCount");
+        expect(data.waitingCount).toBeGreaterThanOrEqual(2);
         // First entry should be emergency due to priority 10 vs 1
         expect(data.queue[0].id).toBe(emergencyQueueEntryId);
         expect(data.queue[0].type).toBe("EMERGENCY");
+        expect(data.queue[0]).toHaveProperty("visit_id");
     });
 
     it("GET /patients/me/queue - patient should view active queue status", async () => {
@@ -556,6 +594,8 @@ describe("Queue Lifecycle & Dynamic Prioritization", () => {
         expect(data).toHaveProperty("queueEntry");
         expect(data.queueEntry).not.toBeNull();
         expect([walkInQueueEntryId, emergencyQueueEntryId]).toContain(data.queueEntry.id);
+        expect(data.queueEntry).toHaveProperty("visit_id");
+        expect(data).toHaveProperty("waitingCount");
     });
 
     it("GET /doctors/me/queue - doctor should view queue overview", async () => {
@@ -568,6 +608,8 @@ describe("Queue Lifecycle & Dynamic Prioritization", () => {
         expect(data).toHaveProperty("queue");
         expect(Array.isArray(data.queue)).toBe(true);
         expect(data.queue.length).toBeGreaterThanOrEqual(2);
+        expect(data).toHaveProperty("waitingCount");
+        expect(data.queue[0]).toHaveProperty("visit_id");
     });
 
     it("POST /queue/doctor/call-next - doctor calls next highest-priority patient (CALLED)", async () => {
@@ -581,9 +623,11 @@ describe("Queue Lifecycle & Dynamic Prioritization", () => {
         expect(data).toHaveProperty("next");
         expect(data.next.id).toBe(emergencyQueueEntryId);
         expect(data.next.status).toBe("CALLED");
+        expect(data.next).toHaveProperty("called_at");
+        expect(data.next.called_at).not.toBeNull();
     });
 
-    it("POST /queue/:queueEntryId/start - doctor starts serving patient (SERVING)", async () => {
+    it("POST /queue/:queueEntryId/start - doctor starts serving patient (IN_PROGRESS) and updates visit", async () => {
         const res = await fetch(`${baseUrl}/queue/${emergencyQueueEntryId}/start`, {
             method: "POST",
             headers: { Authorization: `Bearer ${doctorToken}` },
@@ -591,7 +635,18 @@ describe("Queue Lifecycle & Dynamic Prioritization", () => {
 
         expect(res.status).toBe(200);
         const data = await res.json();
-        expect(data.status).toBe("SERVING");
+        expect(["IN_PROGRESS", "SERVING"]).toContain(data.status);
+        expect(data.status).toBe("IN_PROGRESS");
+        expect(data).toHaveProperty("started_at");
+        expect(data.started_at).not.toBeNull();
+
+        // Verify linked visit transitioned to IN_CONSULTATION
+        const visitRes = await fetch(`${baseUrl}/visits/${data.visit_id}`, {
+            headers: { Authorization: `Bearer ${doctorToken}` },
+        });
+        expect(visitRes.status).toBe(200);
+        const visitData = await visitRes.json();
+        expect(visitData.status).toBe("IN_CONSULTATION");
     });
 
     it("POST /doctors/queue/:queueEntryId/complete - doctor completes consultation (COMPLETED)", async () => {
@@ -603,6 +658,16 @@ describe("Queue Lifecycle & Dynamic Prioritization", () => {
         expect(res.status).toBe(200);
         const data = await res.json();
         expect(data.status).toBe("COMPLETED");
+        expect(data).toHaveProperty("completed_at");
+        expect(data.completed_at).not.toBeNull();
+
+        // Linked visit should still be IN_CONSULTATION (complete does NOT auto-complete visit)
+        const visitRes = await fetch(`${baseUrl}/visits/${data.visit_id}`, {
+            headers: { Authorization: `Bearer ${doctorToken}` },
+        });
+        expect(visitRes.status).toBe(200);
+        const visitData = await visitRes.json();
+        expect(visitData.status).toBe("IN_CONSULTATION");
     });
 
     it("POST /doctors/queue/:queueEntryId/skip - doctor skips walk-in patient (SKIPPED)", async () => {
@@ -614,6 +679,51 @@ describe("Queue Lifecycle & Dynamic Prioritization", () => {
         expect(res.status).toBe(200);
         const data = await res.json();
         expect(data.status).toBe("SKIPPED");
+    });
+
+    it("POST /queue/join - should accept an existing visitId and advance it to WAITING_OPD", async () => {
+        // Create visit directly first
+        const vRes = await fetch(`${baseUrl}/visits`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${patientToken}`,
+            },
+            body: JSON.stringify({
+                patientId,
+                visitType: "WALK_IN",
+                assignedDoctorId: doctorId,
+            }),
+        });
+        expect(vRes.status).toBe(201);
+        const createdVisit = await vRes.json();
+        expect(createdVisit.status).toBe("REGISTERED");
+
+        // Now join queue with this visitId
+        const qRes = await fetch(`${baseUrl}/queue/join`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${patientToken}`,
+            },
+            body: JSON.stringify({
+                visitId: createdVisit.id,
+                doctorId,
+                priority: 5,
+            }),
+        });
+        expect(qRes.status).toBe(201);
+        const qData = await qRes.json();
+        expect(qData.visit_id).toBe(createdVisit.id);
+        expect(qData.status).toBe("WAITING");
+
+        // Verify that the visit has advanced to WAITING_OPD
+        const checkV = await fetch(`${baseUrl}/visits/${createdVisit.id}`, {
+            headers: { Authorization: `Bearer ${patientToken}` },
+        });
+        expect(checkV.status).toBe(200);
+        const checkData = await checkV.json();
+        expect(checkData.status).toBe("WAITING_OPD");
     });
 });
 
@@ -706,10 +816,8 @@ describe("Patient Creation & Profile Ownership Flow", () => {
 });
 
 describe("Staff Administration & Role Enforcement Flow", () => {
-    const nurseEmail = `nurse_${Date.now()}@example.com`;
-    const nursePassword = "NursePassword123!";
-
     it("POST /admin/staff - admin creates staff member (NURSE)", async () => {
+
         const res = await fetch(`${baseUrl}/admin/staff`, {
             method: "POST",
             headers: {
@@ -731,6 +839,8 @@ describe("Staff Administration & Role Enforcement Flow", () => {
         expect(data).toHaveProperty("staff");
         expect(data.staff.role).toBe("NURSE");
         expect(data).toHaveProperty("user");
+        expect(data).toHaveProperty("temporaryPassword");
+        expect(data.temporaryPassword).toBe(nursePassword);
 
         createdStaffId = data.staff.id;
         createdStaffUserId = data.user.id;
@@ -815,14 +925,223 @@ describe("Staff Administration & Role Enforcement Flow", () => {
         expect(data.user.staffRole).toBe("DOCTOR");
         expect(data).toHaveProperty("doctor");
     });
+
+    it("POST /admin/staff - creates staff without password, returns generated temporaryPassword, and logs in via POST /auth/login", async () => {
+        const res = await fetch(`${baseUrl}/admin/staff`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${adminToken}`,
+            },
+            body: JSON.stringify({
+                name: "Alex Lab Technician",
+                email: autoPassStaffEmail,
+                role: "LAB_TECH",
+                status: "ACTIVE",
+            }),
+        });
+
+        expect(res.status).toBe(201);
+        const data = await res.json();
+        expect(data).toHaveProperty("staff");
+        expect(data.staff.role).toBe("LAB_TECH");
+        expect(data).toHaveProperty("user");
+        expect(data.user.email).toBe(autoPassStaffEmail.toLowerCase());
+        expect(data).toHaveProperty("temporaryPassword");
+        expect(typeof data.temporaryPassword).toBe("string");
+        expect(data.temporaryPassword.length).toBeGreaterThanOrEqual(6);
+
+        autoPassStaffId = data.staff.id;
+        autoPassStaffUserId = data.user.id;
+        autoPassTemporaryPassword = data.temporaryPassword;
+
+        // Verify newly created staff can log in using POST /auth/login with temporaryPassword
+        const loginRes = await fetch(`${baseUrl}/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                email: autoPassStaffEmail,
+                password: autoPassTemporaryPassword,
+            }),
+        });
+
+        expect(loginRes.status).toBe(200);
+        const loginData = await loginRes.json();
+        expect(loginData).toHaveProperty("token");
+        expect(loginData.user.role).toBe("STAFF");
+        expect(loginData.user.staffRole).toBe("LAB_TECH");
+
+        const decoded = jwt.decode(loginData.token) as Record<string, unknown>;
+        expect(decoded["userId"]).toBe(autoPassStaffUserId);
+        expect(decoded["role"]).toBe("STAFF");
+        expect(decoded["staffRole"]).toBe("LAB_TECH");
+    });
+
+    it("PATCH /admin/staff/:staffId/status - deactivating staff updates staff_profiles and sets users.is_active = false, blocking login", async () => {
+        const patchRes = await fetch(`${baseUrl}/admin/staff/${autoPassStaffId}/status`, {
+            method: "PATCH",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${adminToken}`,
+            },
+            body: JSON.stringify({
+                status: "INACTIVE",
+            }),
+        });
+
+        expect(patchRes.status).toBe(200);
+        const patchData = await patchRes.json();
+        expect(patchData.status).toBe("INACTIVE");
+
+        // Verify users.is_active is now false in DB
+        const userCheck = await pool.query<{ is_active: boolean }>(
+            'SELECT is_active FROM "User" WHERE id = $1',
+            [autoPassStaffUserId]
+        );
+        expect(userCheck.rows[0]?.is_active).toBe(false);
+
+        // Attempt login via POST /auth/login - should fail with 403 Forbidden
+        const loginRes = await fetch(`${baseUrl}/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                email: autoPassStaffEmail,
+                password: autoPassTemporaryPassword,
+            }),
+        });
+
+        expect(loginRes.status).toBe(403);
+    });
+
+    it("PATCH /admin/staff/:staffId/status - reactivating staff sets users.is_active = true and restores login", async () => {
+        const patchRes = await fetch(`${baseUrl}/admin/staff/${autoPassStaffId}/status`, {
+            method: "PATCH",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${adminToken}`,
+            },
+            body: JSON.stringify({
+                status: "ACTIVE",
+            }),
+        });
+
+        expect(patchRes.status).toBe(200);
+        const patchData = await patchRes.json();
+        expect(patchData.status).toBe("ACTIVE");
+
+        // Verify users.is_active is now true in DB
+        const userCheck = await pool.query<{ is_active: boolean }>(
+            'SELECT is_active FROM "User" WHERE id = $1',
+            [autoPassStaffUserId]
+        );
+        expect(userCheck.rows[0]?.is_active).toBe(true);
+
+        // Login via POST /auth/login should succeed again
+        const loginRes = await fetch(`${baseUrl}/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                email: autoPassStaffEmail,
+                password: autoPassTemporaryPassword,
+            }),
+        });
+
+        expect(loginRes.status).toBe(200);
+    });
+
+    it("POST /admin/staff - admin creates staff with role=DOCTOR in single transaction creating user, staff, and doctor", async () => {
+        const res = await fetch(`${baseUrl}/admin/staff`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${adminToken}`,
+            },
+            body: JSON.stringify({
+                name: "Dr. Gregory House AdminCreated",
+                email: adminCreatedDocStaffEmail,
+                role: "DOCTOR",
+                specialization: "Pediatrics",
+                department: "Pediatrics Department",
+                licenseNumber: "LIC-STAFF-DOC-999",
+            }),
+        });
+
+        expect(res.status).toBe(201);
+        const data = await res.json();
+        expect(data).toHaveProperty("staff");
+        expect(data.staff.role).toBe("DOCTOR");
+        expect(data).toHaveProperty("user");
+        expect(data).toHaveProperty("doctor");
+        expect(data.doctor.specialization).toBe("Pediatrics");
+        expect(data.doctor.department).toBe("Pediatrics Department");
+        expect(data).toHaveProperty("temporaryPassword");
+
+        adminCreatedDocStaffId = data.staff.id;
+        adminCreatedDocStaffUserId = data.user.id;
+
+        // Verify login via POST /auth/login returns staffRole=DOCTOR
+        const loginRes = await fetch(`${baseUrl}/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                email: adminCreatedDocStaffEmail,
+                password: data.temporaryPassword,
+            }),
+        });
+
+        expect(loginRes.status).toBe(200);
+        const loginData = await loginRes.json();
+        expect(loginData.user.role).toBe("STAFF");
+        expect(loginData.user.staffRole).toBe("DOCTOR");
+        expect(loginData).toHaveProperty("doctor");
+    });
+
+    it("PATCH /admin/staff/:staffId - updates name and email in users table, reflected in GET /admin/staff", async () => {
+        const updatedName = "Alex Tech Updated";
+        const patchRes = await fetch(`${baseUrl}/admin/staff/${autoPassStaffId}`, {
+            method: "PATCH",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${adminToken}`,
+            },
+            body: JSON.stringify({
+                name: updatedName,
+            }),
+        });
+
+        expect(patchRes.status).toBe(200);
+
+        // GET /admin/staff joins through to users for name and email
+        const listRes = await fetch(`${baseUrl}/admin/staff`, {
+            headers: { Authorization: `Bearer ${adminToken}` },
+        });
+        expect(listRes.status).toBe(200);
+        const listData = await listRes.json();
+        const found = listData.staff.find((s: { id: string }) => s.id === autoPassStaffId);
+        expect(found).toBeDefined();
+        expect(found.name).toBe(updatedName);
+        expect(found.email).toBe(autoPassStaffEmail.toLowerCase());
+    });
+
+    it("GET /admin/doctors - joins through to users for name and email", async () => {
+        const res = await fetch(`${baseUrl}/admin/doctors`, {
+            headers: { Authorization: `Bearer ${adminToken}` },
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(Array.isArray(data.doctors)).toBe(true);
+        const found = data.doctors.find((d: { email: string }) => d.email.toLowerCase() === adminCreatedDocStaffEmail.toLowerCase());
+        expect(found).toBeDefined();
+        expect(found.name).toBe("Dr. Gregory House AdminCreated");
+    });
 });
 
 describe("Doctor Creation via Admin & Department Hierarchy", () => {
-    const newDocEmail = `doc_admin_${Date.now()}@example.com`;
-    const newDocPassword = "NewDoctorPassword123!";
     let newDoctorToken: string;
 
     it("POST /admin/doctors - admin creates doctor with department", async () => {
+
         const res = await fetch(`${baseUrl}/admin/doctors`, {
             method: "POST",
             headers: {
@@ -930,3 +1249,1082 @@ describe("Comprehensive Role-Based Authorization Enforcement", () => {
         expect(res.status).toBe(401);
     });
 });
+
+describe("Unified Auth System (POST /auth/login & POST /auth/register)", () => {
+    it("POST /auth/login - patient logs in successfully with correct JWT payload shape", async () => {
+        const res = await fetch(`${baseUrl}/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                email: patientEmail,
+                password: patientPassword,
+            }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data).toHaveProperty("token");
+        expect(data.user.role).toBe("PATIENT");
+
+        const decoded = jwt.decode(data.token) as Record<string, unknown>;
+        expect(decoded["userId"]).toBe(userId);
+        expect(decoded["email"]).toBe(patientEmail);
+        expect(decoded["role"]).toBe("PATIENT");
+        expect(decoded["staffRole"]).toBeUndefined();
+    });
+
+    it("POST /auth/login - staff member (nurse) logs in successfully", async () => {
+        const res = await fetch(`${baseUrl}/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                email: nurseEmail,
+                password: nursePassword,
+            }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data).toHaveProperty("token");
+        expect(data.user.role).toBe("STAFF");
+        expect(data.user.staffRole).toBe("NURSE");
+    });
+
+    it("JWT payload shape for a staff user - includes userId, email, role, and staffRole", async () => {
+        const res = await fetch(`${baseUrl}/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                email: nurseEmail,
+                password: nursePassword,
+            }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        const decoded = jwt.decode(data.token) as Record<string, unknown>;
+
+        expect(decoded).toHaveProperty("userId");
+        expect(typeof decoded["userId"]).toBe("string");
+        expect(decoded["userId"]).toBe(createdStaffUserId);
+        expect(decoded).toHaveProperty("email", nurseEmail);
+        expect(decoded).toHaveProperty("role", "STAFF");
+        expect(decoded).toHaveProperty("staffRole", "NURSE");
+    });
+
+    it("POST /auth/login - doctor logs in through unified endpoint with staffRole=DOCTOR", async () => {
+        const res = await fetch(`${baseUrl}/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                email: newDocEmail,
+                password: newDocPassword,
+            }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data).toHaveProperty("token");
+        expect(data.user.role).toBe("STAFF");
+        expect(data.user.staffRole).toBe("DOCTOR");
+
+        const decoded = jwt.decode(data.token) as Record<string, unknown>;
+        expect(decoded["role"]).toBe("STAFF");
+        expect(decoded["staffRole"]).toBe("DOCTOR");
+    });
+
+    it("POST /auth/login - admin logs in through unified endpoint with staffRole omitted", async () => {
+        const res = await fetch(`${baseUrl}/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                email: adminEmail,
+                password: adminPassword,
+            }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data).toHaveProperty("token");
+        expect(data.user.role).toBe("ADMIN");
+
+        const decoded = jwt.decode(data.token) as Record<string, unknown>;
+        expect(decoded["role"]).toBe("ADMIN");
+        expect(decoded["staffRole"]).toBeUndefined();
+    });
+
+    it("POST /auth/register - rejects attempt to register with role=STAFF", async () => {
+        const res = await fetch(`${baseUrl}/auth/register`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                name: "Attacker Staff",
+                email: `attacker_staff_${Date.now()}@example.com`,
+                password: "password123",
+                role: "STAFF",
+            }),
+        });
+
+        expect([400, 403]).toContain(res.status);
+    });
+
+    it("POST /auth/register - rejects attempt to register with role=ADMIN", async () => {
+        const res = await fetch(`${baseUrl}/auth/register`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                name: "Attacker Admin",
+                email: `attacker_admin_${Date.now()}@example.com`,
+                password: "password123",
+                role: "ADMIN",
+            }),
+        });
+
+        expect([400, 403]).toContain(res.status);
+    });
+
+    it("POST /auth/register - patient registration succeeds", async () => {
+        regPatientEmail = `valid_patient_${Date.now()}@example.com`;
+        const res = await fetch(`${baseUrl}/auth/register`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                name: "New Valid Patient",
+                email: regPatientEmail,
+                password: "password123",
+                role: "PATIENT",
+            }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data).toHaveProperty("token");
+        expect(data.user.role).toBe("PATIENT");
+
+        const decoded = jwt.decode(data.token) as Record<string, unknown>;
+        expect(decoded["role"]).toBe("PATIENT");
+        expect(decoded["staffRole"]).toBeUndefined();
+    });
+});
+
+describe("Visits Backbone Module & Status Transition Matrix Flow", () => {
+    let testVisitId: string;
+    let onlineVisitId: string;
+
+    it("POST /visits - staff creates visit with status=REGISTERED", async () => {
+        const res = await fetch(`${baseUrl}/visits`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${nurseToken}`,
+            },
+            body: JSON.stringify({
+                patient_id: patientId,
+                visit_type: "OPD",
+                assigned_doctor_id: doctorId,
+            }),
+        });
+
+        expect(res.status).toBe(201);
+        const data = await res.json();
+        expect(data).toHaveProperty("id");
+        expect(data.patient_id).toBe(patientId);
+        expect(data.visit_type).toBe("OPD");
+        expect(data.status).toBe("REGISTERED");
+        expect(data.registered_by).toBe(createdStaffUserId);
+
+        testVisitId = data.id;
+    });
+
+    it("POST /visits - patient creates visit for own profile (online check-in)", async () => {
+        const res = await fetch(`${baseUrl}/visits`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${patientToken}`,
+            },
+            body: JSON.stringify({
+                patientId,
+                visitType: "ONLINE",
+            }),
+        });
+
+        expect(res.status).toBe(201);
+        const data = await res.json();
+        expect(data).toHaveProperty("id");
+        expect(data.patientId).toBe(patientId);
+        expect(data.visitType).toBe("ONLINE");
+        expect(data.status).toBe("REGISTERED");
+        expect(data.registeredBy).toBe(userId);
+
+        onlineVisitId = data.id;
+    });
+
+    it("POST /visits - patient cannot create visit for another user's patient profile (403)", async () => {
+        const res = await fetch(`${baseUrl}/visits`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${otherUserToken}`,
+            },
+            body: JSON.stringify({
+                patient_id: patientId,
+                visit_type: "ONLINE",
+            }),
+        });
+
+        expect(res.status).toBe(403);
+    });
+
+    it("POST /visits - unauthenticated request is rejected (401)", async () => {
+        const res = await fetch(`${baseUrl}/visits`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                patient_id: patientId,
+                visit_type: "ONLINE",
+            }),
+        });
+
+        expect(res.status).toBe(401);
+    });
+
+    it("GET /patients/me/current-visit - retrieves authenticated patient's active visit", async () => {
+        const res = await fetch(`${baseUrl}/patients/me/current-visit`, {
+            headers: { Authorization: `Bearer ${patientToken}` },
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data).not.toBeNull();
+        expect(data.id).toBe(onlineVisitId);
+        expect(data.status).toBe("REGISTERED");
+    });
+
+    it("GET /visits/:id - returns full visit detail with joined related entities", async () => {
+        // Seed test vitals and invoice linked to testVisitId
+        await pool.query(
+            `INSERT INTO "vitals" (visit_id, patient_id, recorded_by, temperature, heart_rate, blood_pressure)
+             VALUES ($1, $2, $3, 98.6, 72, '120/80')`,
+            [testVisitId, patientId, createdStaffUserId]
+        );
+        await pool.query(
+            `INSERT INTO "invoices" (visit_id, patient_id, amount, status)
+             VALUES ($1, $2, 250.00, 'PENDING')`,
+            [testVisitId, patientId]
+        );
+
+        const res = await fetch(`${baseUrl}/visits/${testVisitId}`, {
+            headers: { Authorization: `Bearer ${nurseToken}` },
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.id).toBe(testVisitId);
+        expect(data).toHaveProperty("vitals");
+        expect(Array.isArray(data.vitals)).toBe(true);
+        expect(data.vitals.length).toBeGreaterThanOrEqual(1);
+        expect(data.vitals[0].temperature).toBe("98.6");
+
+        expect(data).toHaveProperty("invoices");
+        expect(Array.isArray(data.invoices)).toBe(true);
+        expect(data.invoices.length).toBeGreaterThanOrEqual(1);
+
+        expect(data).toHaveProperty("queue_entries");
+        expect(data).toHaveProperty("consultations");
+        expect(data).toHaveProperty("prescriptions");
+        expect(data).toHaveProperty("investigation_orders");
+    });
+
+    it("GET /visits/:id - other user cannot access patient's visit (403)", async () => {
+        const res = await fetch(`${baseUrl}/visits/${testVisitId}`, {
+            headers: { Authorization: `Bearer ${otherUserToken}` },
+        });
+
+        expect(res.status).toBe(403);
+    });
+
+    describe("Visit Status Transition Matrix: Legal Forward Moves", () => {
+        let visitSeqId: string;
+
+        it("Step 1: create visit in REGISTERED", async () => {
+            const res = await fetch(`${baseUrl}/visits`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${nurseToken}`,
+                },
+                body: JSON.stringify({
+                    patient_id: patientId,
+                    visit_type: "OPD",
+                }),
+            });
+            expect(res.status).toBe(201);
+            const data = await res.json();
+            visitSeqId = data.id;
+            expect(data.status).toBe("REGISTERED");
+        });
+
+        it("REGISTERED -> VITALS (legal)", async () => {
+            const res = await fetch(`${baseUrl}/visits/${visitSeqId}/status`, {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${nurseToken}`,
+                },
+                body: JSON.stringify({ status: "VITALS" }),
+            });
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.status).toBe("VITALS");
+        });
+
+        it("VITALS -> WAITING_OPD (legal)", async () => {
+            const res = await fetch(`${baseUrl}/visits/${visitSeqId}/status`, {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${nurseToken}`,
+                },
+                body: JSON.stringify({ status: "WAITING_OPD" }),
+            });
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.status).toBe("WAITING_OPD");
+        });
+
+        it("WAITING_OPD -> IN_CONSULTATION (legal)", async () => {
+            const res = await fetch(`${baseUrl}/visits/${visitSeqId}/status`, {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${nurseToken}`,
+                },
+                body: JSON.stringify({ status: "IN_CONSULTATION" }),
+            });
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.status).toBe("IN_CONSULTATION");
+        });
+
+        it("IN_CONSULTATION -> DIAGNOSTICS (legal)", async () => {
+            const res = await fetch(`${baseUrl}/visits/${visitSeqId}/status`, {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${nurseToken}`,
+                },
+                body: JSON.stringify({ status: "DIAGNOSTICS" }),
+            });
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.status).toBe("DIAGNOSTICS");
+        });
+
+        it("DIAGNOSTICS -> PHARMACY (legal)", async () => {
+            const res = await fetch(`${baseUrl}/visits/${visitSeqId}/status`, {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${nurseToken}`,
+                },
+                body: JSON.stringify({ status: "PHARMACY" }),
+            });
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.status).toBe("PHARMACY");
+        });
+
+        it("PHARMACY -> BILLING (legal)", async () => {
+            const res = await fetch(`${baseUrl}/visits/${visitSeqId}/status`, {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${nurseToken}`,
+                },
+                body: JSON.stringify({ status: "BILLING" }),
+            });
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.status).toBe("BILLING");
+        });
+
+        it("BILLING -> COMPLETED (legal terminal)", async () => {
+            const res = await fetch(`${baseUrl}/visits/${visitSeqId}/status`, {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${nurseToken}`,
+                },
+                body: JSON.stringify({ status: "COMPLETED" }),
+            });
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.status).toBe("COMPLETED");
+        });
+    });
+
+    describe("Visit Status Transition Matrix: Legal Skips", () => {
+        it("IN_CONSULTATION -> PHARMACY (skipping DIAGNOSTICS)", async () => {
+            const createRes = await fetch(`${baseUrl}/visits`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ patient_id: patientId, visit_type: "OPD" }),
+            });
+            const { id } = await createRes.json();
+
+            await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "VITALS" }),
+            });
+            await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "WAITING_OPD" }),
+            });
+            await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "IN_CONSULTATION" }),
+            });
+
+            // Skip DIAGNOSTICS directly to PHARMACY
+            const res = await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "PHARMACY" }),
+            });
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.status).toBe("PHARMACY");
+        });
+
+        it("IN_CONSULTATION -> BILLING (skipping both DIAGNOSTICS and PHARMACY)", async () => {
+            const createRes = await fetch(`${baseUrl}/visits`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ patient_id: patientId, visit_type: "OPD" }),
+            });
+            const { id } = await createRes.json();
+
+            await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "VITALS" }),
+            });
+            await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "WAITING_OPD" }),
+            });
+            await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "IN_CONSULTATION" }),
+            });
+
+            // Skip DIAGNOSTICS and PHARMACY directly to BILLING
+            const res = await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "BILLING" }),
+            });
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.status).toBe("BILLING");
+        });
+
+        it("WAITING_OPD -> BILLING (skipping consultation, diagnostics, pharmacy)", async () => {
+            const createRes = await fetch(`${baseUrl}/visits`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ patient_id: patientId, visit_type: "OPD" }),
+            });
+            const { id } = await createRes.json();
+
+            await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "VITALS" }),
+            });
+            await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "WAITING_OPD" }),
+            });
+
+            // Move directly from WAITING_OPD to BILLING
+            const res = await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "BILLING" }),
+            });
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.status).toBe("BILLING");
+        });
+
+        it("DIAGNOSTICS -> BILLING (skipping PHARMACY)", async () => {
+            const createRes = await fetch(`${baseUrl}/visits`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ patient_id: patientId, visit_type: "OPD" }),
+            });
+            const { id } = await createRes.json();
+
+            await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "VITALS" }),
+            });
+            await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "WAITING_OPD" }),
+            });
+            await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "IN_CONSULTATION" }),
+            });
+            await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "DIAGNOSTICS" }),
+            });
+
+            // Skip PHARMACY to BILLING
+            const res = await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "BILLING" }),
+            });
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.status).toBe("BILLING");
+        });
+    });
+
+    describe("Visit Status Transition Matrix: Cancellation from Non-Completed States", () => {
+        it("REGISTERED -> CANCELLED (legal)", async () => {
+            const createRes = await fetch(`${baseUrl}/visits`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ patient_id: patientId, visit_type: "OPD" }),
+            });
+            const { id } = await createRes.json();
+
+            const res = await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "CANCELLED" }),
+            });
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.status).toBe("CANCELLED");
+        });
+
+        it("VITALS -> CANCELLED (legal)", async () => {
+            const createRes = await fetch(`${baseUrl}/visits`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ patient_id: patientId, visit_type: "OPD" }),
+            });
+            const { id } = await createRes.json();
+
+            await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "VITALS" }),
+            });
+
+            const res = await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "CANCELLED" }),
+            });
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.status).toBe("CANCELLED");
+        });
+
+        it("BILLING -> CANCELLED (legal from any non-completed state)", async () => {
+            const createRes = await fetch(`${baseUrl}/visits`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ patient_id: patientId, visit_type: "OPD" }),
+            });
+            const { id } = await createRes.json();
+
+            await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "VITALS" }),
+            });
+            await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "WAITING_OPD" }),
+            });
+            await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "BILLING" }),
+            });
+
+            const res = await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "CANCELLED" }),
+            });
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.status).toBe("CANCELLED");
+        });
+    });
+
+    describe("Visit Status Transition Matrix: Illegal & Backward Transitions Rejected (400)", () => {
+        let testIllegalVisitId: string;
+
+        beforeAll(async () => {
+            const createRes = await fetch(`${baseUrl}/visits`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ patient_id: patientId, visit_type: "OPD" }),
+            });
+            const data = await createRes.json();
+            testIllegalVisitId = data.id;
+        });
+
+        it("REGISTERED -> BILLING (illegal forward skip) rejected with 400", async () => {
+            const res = await fetch(`${baseUrl}/visits/${testIllegalVisitId}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "BILLING" }),
+            });
+            expect(res.status).toBe(400);
+        });
+
+        it("REGISTERED -> COMPLETED (illegal forward skip) rejected with 400", async () => {
+            const res = await fetch(`${baseUrl}/visits/${testIllegalVisitId}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "COMPLETED" }),
+            });
+            expect(res.status).toBe(400);
+        });
+
+        it("REGISTERED -> REGISTERED (no-op) rejected with 400", async () => {
+            const res = await fetch(`${baseUrl}/visits/${testIllegalVisitId}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "REGISTERED" }),
+            });
+            expect(res.status).toBe(400);
+        });
+
+        it("Backward transition: VITALS -> REGISTERED rejected with 400", async () => {
+            // Move to VITALS first
+            await fetch(`${baseUrl}/visits/${testIllegalVisitId}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "VITALS" }),
+            });
+
+            // Attempt backward move to REGISTERED
+            const res = await fetch(`${baseUrl}/visits/${testIllegalVisitId}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "REGISTERED" }),
+            });
+            expect(res.status).toBe(400);
+        });
+
+        it("COMPLETED -> CANCELLED rejected with 400", async () => {
+            // Advance to COMPLETED
+            await fetch(`${baseUrl}/visits/${testIllegalVisitId}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "WAITING_OPD" }),
+            });
+            await fetch(`${baseUrl}/visits/${testIllegalVisitId}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "BILLING" }),
+            });
+            await fetch(`${baseUrl}/visits/${testIllegalVisitId}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "COMPLETED" }),
+            });
+
+            // Attempt to CANCEL completed visit
+            const res = await fetch(`${baseUrl}/visits/${testIllegalVisitId}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "CANCELLED" }),
+            });
+            expect(res.status).toBe(400);
+        });
+
+        it("COMPLETED -> BILLING rejected with 400", async () => {
+            const res = await fetch(`${baseUrl}/visits/${testIllegalVisitId}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "BILLING" }),
+            });
+            expect(res.status).toBe(400);
+        });
+
+        it("CANCELLED visit cannot transition to any other status (rejected with 400)", async () => {
+            const createRes = await fetch(`${baseUrl}/visits`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ patient_id: patientId, visit_type: "OPD" }),
+            });
+            const { id } = await createRes.json();
+
+            // Cancel it
+            await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "CANCELLED" }),
+            });
+
+            // Try to move to REGISTERED or COMPLETED
+            const res1 = await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "REGISTERED" }),
+            });
+            expect(res1.status).toBe(400);
+
+            const res2 = await fetch(`${baseUrl}/visits/${id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${nurseToken}` },
+                body: JSON.stringify({ status: "COMPLETED" }),
+            });
+            expect(res2.status).toBe(400);
+        });
+    });
+
+    it("GET /patients/me/current-visit - returns null when active visit is cancelled/completed", async () => {
+        // Complete all active visits for this user's patients
+        await pool.query(
+            `UPDATE "visits" SET status = 'COMPLETED' WHERE patient_id IN (SELECT id FROM "Patient" WHERE owner_user_id = $1)`,
+            [userId]
+        );
+
+        const res = await fetch(`${baseUrl}/patients/me/current-visit`, {
+            headers: { Authorization: `Bearer ${patientToken}` },
+        });
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data).toBeNull();
+    });
+});
+
+describe("Clinical Modules & Full Visit Lifecycle (Vitals -> Consultation -> Lab -> Pharmacy -> Billing -> Completed)", () => {
+    let clinicalVisitId: string;
+    let clinicalPrescriptionId: string;
+    let clinicalOrderId: string;
+    let clinicalInvoiceId: string;
+    let pharmacistToken: string;
+    let labTechToken: string;
+
+    beforeAll(() => {
+        const staffUser = createdStaffUserId || userId;
+        pharmacistToken = jwt.sign(
+            { userId: staffUser, email: "pharmacist@hospital.test", role: "STAFF", staffRole: "PHARMACIST" },
+            jwtSecret!,
+            { expiresIn: "4h" }
+        );
+        labTechToken = jwt.sign(
+            { userId: staffUser, email: "labtech@hospital.test", role: "STAFF", staffRole: "LAB_TECH" },
+            jwtSecret!,
+            { expiresIn: "4h" }
+        );
+    });
+
+    it("POST /visits - creates visit in REGISTERED status", async () => {
+        const res = await fetch(`${baseUrl}/visits`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${patientToken}`,
+            },
+            body: JSON.stringify({
+                patientId,
+                visitType: "OPD",
+                assignedDoctorId: doctorId,
+            }),
+        });
+
+        expect(res.status).toBe(201);
+        const data = await res.json();
+        expect(data.status).toBe("REGISTERED");
+        expect(data.patient_id).toBe(patientId);
+        clinicalVisitId = data.id;
+    });
+
+    it("POST /visits/:visitId/vitals - records vitals and transitions visit to VITALS", async () => {
+        const res = await fetch(`${baseUrl}/visits/${clinicalVisitId}/vitals`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${nurseToken}`,
+            },
+            body: JSON.stringify({
+                temperature: 98.6,
+                heartRate: 72,
+                bloodPressure: "120/80",
+                respiratoryRate: 16,
+                oxygenSaturation: 99,
+                weight: 70.5,
+                height: 175,
+                notes: "Vitals normal",
+            }),
+        });
+
+        expect(res.status).toBe(201);
+        const data = await res.json();
+        expect(data).toHaveProperty("id");
+        expect(data.visit_id).toBe(clinicalVisitId);
+        expect(Number(data.temperature)).toBe(98.6);
+        expect(data.heart_rate).toBe(72);
+        expect(data.blood_pressure).toBe("120/80");
+
+        // Verify visit status transitioned to VITALS
+        const vRes = await fetch(`${baseUrl}/visits/${clinicalVisitId}`, {
+            headers: { Authorization: `Bearer ${patientToken}` },
+        });
+        expect(vRes.status).toBe(200);
+        const vData = await vRes.json();
+        expect(vData.status).toBe("VITALS");
+    });
+
+    it("GET /visits/:visitId/vitals - retrieves vitals for visit", async () => {
+        const res = await fetch(`${baseUrl}/visits/${clinicalVisitId}/vitals`, {
+            headers: { Authorization: `Bearer ${patientToken}` },
+        });
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data).toHaveProperty("vitals");
+        expect(data.vitals.length).toBeGreaterThan(0);
+        expect(data.vitals[0].visit_id).toBe(clinicalVisitId);
+    });
+
+    it("POST /queue/join & POST /queue/:id/start - moves visit to WAITING_OPD then IN_CONSULTATION", async () => {
+        const joinRes = await fetch(`${baseUrl}/queue/join`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${patientToken}`,
+            },
+            body: JSON.stringify({
+                visitId: clinicalVisitId,
+                doctorId,
+                priority: 1,
+            }),
+        });
+        expect(joinRes.status).toBe(201);
+        const joinData = await joinRes.json();
+        expect(joinData.visit_id).toBe(clinicalVisitId);
+
+        const vRes1 = await fetch(`${baseUrl}/visits/${clinicalVisitId}`, {
+            headers: { Authorization: `Bearer ${patientToken}` },
+        });
+        const vData1 = await vRes1.json();
+        expect(vData1.status).toBe("WAITING_OPD");
+
+        // Start consultation in queue
+        const startRes = await fetch(`${baseUrl}/queue/${joinData.id}/start`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${doctorToken}` },
+        });
+        expect(startRes.status).toBe(200);
+
+        const vRes2 = await fetch(`${baseUrl}/visits/${clinicalVisitId}`, {
+            headers: { Authorization: `Bearer ${patientToken}` },
+        });
+        const vData2 = await vRes2.json();
+        expect(vData2.status).toBe("IN_CONSULTATION");
+    });
+
+    it("POST /doctors/patients/:patientId/consultation - creates consultation and pending prescription", async () => {
+        const res = await fetch(`${baseUrl}/doctors/patients/${patientId}/consultation`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${doctorToken}`,
+            },
+            body: JSON.stringify({
+                visitId: clinicalVisitId,
+                diagnosis: "Acute Bronchitis",
+                notes: "Persistent cough and mild fever",
+                treatmentPlan: "Antibiotics and rest",
+                prescriptions: [
+                    {
+                        medication: "Amoxicillin",
+                        dosage: "500mg",
+                        frequency: "TDS",
+                        duration: "7 days",
+                        instructions: "After meals",
+                    },
+                ],
+            }),
+        });
+
+        expect(res.status).toBe(201);
+        const data = await res.json();
+        expect(data.visit_id).toBe(clinicalVisitId);
+        expect(data.prescriptions).toHaveLength(1);
+        expect(data.prescriptions[0].status).toBe("PENDING");
+        expect(data.prescriptions[0].visit_id).toBe(clinicalVisitId);
+        clinicalPrescriptionId = data.prescriptions[0].id;
+    });
+
+    it("POST /lab-orders - creates investigation order attached to visit", async () => {
+        const res = await fetch(`${baseUrl}/lab-orders`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${nurseToken}`,
+            },
+            body: JSON.stringify({
+                patientId,
+                visitId: clinicalVisitId,
+                testName: "Chest X-Ray",
+                instructions: "PA view",
+            }),
+        });
+
+        expect(res.status).toBe(201);
+        const data = await res.json();
+        expect(data.visit_id).toBe(clinicalVisitId);
+        expect(data.test_name).toBe("Chest X-Ray");
+        expect(data.status).toBe("PENDING");
+        clinicalOrderId = data.id;
+    });
+
+    it("PATCH /lab-orders/:id - lab technician updates status and test result", async () => {
+        const res = await fetch(`${baseUrl}/lab-orders/${clinicalOrderId}`, {
+            method: "PATCH",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${labTechToken}`,
+            },
+            body: JSON.stringify({
+                status: "COMPLETED",
+                result: "Clear lung fields, no consolidation",
+            }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.status).toBe("COMPLETED");
+        expect(data.result).toBe("Clear lung fields, no consolidation");
+    });
+
+    it("PATCH /prescriptions/:id/dispense - pharmacist dispenses medication and creates dispense record", async () => {
+        const res = await fetch(`${baseUrl}/prescriptions/${clinicalPrescriptionId}/dispense`, {
+            method: "PATCH",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${pharmacistToken}`,
+            },
+            body: JSON.stringify({
+                quantity: 21,
+                notes: "Dispensed 21 capsules",
+            }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data).toHaveProperty("prescription");
+        expect(data).toHaveProperty("dispense");
+        expect(data.prescription.status).toBe("DISPENSED");
+        expect(data.dispense.dispensed_quantity).toBe(21);
+        expect(data.dispense.notes).toBe("Dispensed 21 capsules");
+
+        // Verify GET /prescriptions/:id returns dispenses
+        const checkRes = await fetch(`${baseUrl}/prescriptions/${clinicalPrescriptionId}`, {
+            headers: { Authorization: `Bearer ${pharmacistToken}` },
+        });
+        expect(checkRes.status).toBe(200);
+        const checkData = await checkRes.json();
+        expect(checkData.status).toBe("DISPENSED");
+        expect(checkData.dispenses).toHaveLength(1);
+    });
+
+    it("POST /visits/:visitId/invoice - generates invoice with derived line items and moves visit to BILLING", async () => {
+        const res = await fetch(`${baseUrl}/visits/${clinicalVisitId}/invoice`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${nurseToken}`,
+            },
+            body: JSON.stringify({}),
+        });
+
+        expect(res.status).toBe(201);
+        const data = await res.json();
+        expect(data.visit_id).toBe(clinicalVisitId);
+        expect(data.status).toBe("PENDING");
+        expect(Number(data.amount)).toBeGreaterThan(0);
+        expect(Array.isArray(data.invoice_items)).toBe(true);
+        expect(data.invoice_items.length).toBeGreaterThanOrEqual(3);
+
+        const itemTypes = data.invoice_items.map((i: any) => i.item_type);
+        expect(itemTypes).toContain("CONSULTATION");
+        expect(itemTypes).toContain("INVESTIGATION");
+        expect(itemTypes).toContain("MEDICATION");
+
+        clinicalInvoiceId = data.id;
+
+        // Verify visit transitioned to BILLING
+        const vRes = await fetch(`${baseUrl}/visits/${clinicalVisitId}`, {
+            headers: { Authorization: `Bearer ${patientToken}` },
+        });
+        expect(vRes.status).toBe(200);
+        const vData = await vRes.json();
+        expect(vData.status).toBe("BILLING");
+    });
+
+    it("PATCH /invoices/:id/pay - marks invoice PAID and completes the visit", async () => {
+        const res = await fetch(`${baseUrl}/invoices/${clinicalInvoiceId}/pay`, {
+            method: "PATCH",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${nurseToken}`,
+            },
+            body: JSON.stringify({
+                paymentMethod: "UPI",
+            }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.invoice.status).toBe("PAID");
+
+        // Verify visit transitioned to COMPLETED
+        const vRes = await fetch(`${baseUrl}/visits/${clinicalVisitId}`, {
+            headers: { Authorization: `Bearer ${patientToken}` },
+        });
+        expect(vRes.status).toBe(200);
+        const vData = await vRes.json();
+        expect(vData.status).toBe("COMPLETED");
+
+        // Verify all joined fields are present in visit detail
+        expect(vData.vitals).toHaveLength(1);
+        expect(vData.queueEntries.length).toBeGreaterThan(0);
+        expect(vData.consultations).toHaveLength(1);
+        expect(vData.prescriptions).toHaveLength(1);
+        expect(vData.investigationOrders).toHaveLength(1);
+        expect(vData.invoices).toHaveLength(1);
+    });
+});
+
+
+

@@ -9,21 +9,36 @@ export const queueTypeEnum = z.enum([
 export const queueStatusEnum = z.enum([
     "WAITING",
     "CALLED",
+    "IN_PROGRESS",
     "SERVING",
     "COMPLETED",
     "SKIPPED",
     "CANCELLED",
 ]);
 
-export const joinQueueSchema = z.object({
-    patientId: z.string().uuid(),
-    doctorId: z.string().uuid().optional(),
-    departmentId: z.string().uuid().optional(),
-    appointmentId: z.string().uuid().optional(),
-    type: queueTypeEnum.optional().default("WALK_IN"),
-    priority: z.number().int().optional().default(0),
-    scheduledTime: z.string().datetime().optional(),
-});
+export const joinQueueSchema = z
+    .object({
+        visitId: z.string().uuid().optional(),
+        visit_id: z.string().uuid().optional(),
+        patientId: z.string().uuid().optional(),
+        patient_id: z.string().uuid().optional(),
+        doctorId: z.string().uuid().optional(),
+        doctor_id: z.string().uuid().optional(),
+        departmentId: z.string().uuid().optional(),
+        department_id: z.string().uuid().optional(),
+        appointmentId: z.string().uuid().optional(),
+        appointment_id: z.string().uuid().optional(),
+        type: queueTypeEnum.optional().default("WALK_IN"),
+        priority: z.number().int().optional().default(0),
+        scheduledTime: z.string().datetime().optional(),
+        scheduled_time: z.string().datetime().optional(),
+    })
+    .refine(
+        (data) => Boolean(data.visitId || data.visit_id || data.patientId || data.patient_id),
+        {
+            message: "Either visitId (or visit_id) or patientId (or patient_id) must be provided",
+        }
+    );
 
 export const updateQueueStatusSchema = z.object({
     status: queueStatusEnum,

@@ -1,5 +1,7 @@
 import type { Request, Response } from "express";
 import { AppError } from "#utils/errorHandler.js";
+import { loginSchema } from "#modules/auth/auth.schema.js";
+import { loginService } from "#modules/auth/auth.service.js";
 import { staffIdParamSchema } from "./staff.schema.js";
 import {
     getStaffByIdService,
@@ -28,8 +30,6 @@ export async function listStaff(_request: Request, response: Response) {
 }
 
 export async function staffLogin(request: Request, response: Response) {
-    const { loginSchema } = await import("#modules/auth/auth.schema.js");
-    const { loginService } = await import("#modules/auth/auth.service.js");
     const parsed = loginSchema.parse(request.body);
     const result = await loginService(parsed.email, parsed.password);
 
@@ -40,3 +40,4 @@ export async function staffLogin(request: Request, response: Response) {
 
     response.status(200).json(result);
 }
+

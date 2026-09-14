@@ -1,18 +1,13 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Heart, Shield, Sparkles } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { authService } from '../../services/auth.service';
 import { Alert } from '../../components/common/Alert';
-import type { AccountType, AuthMode } from '../../types/auth.types';
+import type { StaffRole, UserRole } from '../../types/auth.types';
 
 export function LoginPage() {
   const { login } = useAuth();
 
-  const [accountType, setAccountType] = useState<AccountType>('patient');
-  const [mode, setMode] = useState<AuthMode>('login');
-
-  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
@@ -20,16 +15,15 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null);
+  const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(() => {
+    if (typeof window !== 'undefined' && sessionStorage.getItem('session_expired') === 'true') {
+      sessionStorage.removeItem('session_expired');
+      return 'Your session has expired. Please sign in again.';
+    }
+    return null;
+  });
 
   const [currentTime, setCurrentTime] = useState(() => new Date());
-
-  useEffect(() => {
-    if (sessionStorage.getItem('session_expired') === 'true') {
-      setSessionExpiredMessage('Your session has expired. Please sign in again.');
-      sessionStorage.removeItem('session_expired');
-    }
-  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -39,137 +33,79 @@ export function LoginPage() {
     return () => clearInterval(timer);
   }, []);
 
-  const handleAccountTypeChange = (type: AccountType) => {
-    setAccountType(type);
-    if (type === 'staff' || type === 'doctor') {
-      setMode('login');
-    }
-    setError('');
-    setNotice('');
-  };
-
-  const switchMode = (nextMode: AuthMode) => {
-    setMode(nextMode);
-    setError('');
-    setNotice('');
-  };
-
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError('');
     setNotice('');
 
-    if (mode === 'register' && !name.trim()) {
-      setError('Please enter your full name.');
+    if (!email.trim() || !password) {
+      setError('Please enter both email and password.');
       return;
     }
 
     setLoading(true);
 
     try {
-      if (mode === 'register') {
-        const response = await authService.register({
-          name: name.trim(),
-          email: email.trim(),
-          password,
-        });
+      const response = await authService.login({
+        email: email.trim(),
+        password,
+      });
 
-        login(response.token, 'PATIENT', {
-          id: response.user?.id,
-          name: name.trim(),
-          email: email.trim(),
+      const token = response.token;
+      const user = response.user;
+      const role = (user?.role || 'PATIENT').toUpperCase() as UserRole;
+      const staffRole = (user?.staffRole || response.staff?.role)?.toUpperCase() as StaffRole | undefined;
+
+      const isDoctor = role === 'DOCTOR' || (role === 'STAFF' && staffRole === 'DOCTOR');
+
+      if (role === 'PATIENT') {
+        login(token, 'PATIENT', {
+          id: user?.id,
+          name: user?.name || 'Patient',
+          email: user?.email || email.trim(),
           role: 'PATIENT',
         });
-
-        window.history.pushState({}, '', '/patient');
+        window.history.pushState({}, '', '/patient/dashboard');
         window.dispatchEvent(new PopStateEvent('popstate'));
-        return;
-      }
-
-      let response;
-      if (accountType === 'staff' || accountType === 'doctor') {
-        try {
-          response = await authService.staffLogin({
-            email: email.trim(),
-            password,
-          });
-        } catch {
-          try {
-            response = await authService.doctorLogin({
-              email: email.trim(),
-              password,
-            });
-          } catch {
-            // Fallback to unified login
-            response = await authService.login({
-              email: email.trim(),
-              password,
-            });
-          }
-        }
-      } else {
-        response = await authService.login({
-          email: email.trim(),
-          password,
+      } else if (role === 'ADMIN') {
+        login(token, 'ADMIN', {
+          id: user?.id,
+          name: user?.name || 'Administrator',
+          email: user?.email || email.trim(),
+          role: 'ADMIN',
         });
-      }
-
-      const userRole = response.user?.role?.toUpperCase();
-      const staffRole = (response.user?.staffRole || response.staff?.role)?.toUpperCase();
-      const isDoctor =
-        userRole === 'DOCTOR' ||
-        (userRole === 'STAFF' && staffRole === 'DOCTOR') ||
-        Boolean(response.doctor);
-      const isStaff = userRole === 'STAFF' && !isDoctor;
-      const isAdmin = userRole === 'ADMIN';
-
-      if (isDoctor) {
-        login(response.token, 'DOCTOR', {
-          id: response.doctor?.id || response.user?.id,
-          name: response.doctor?.name || response.user?.name,
-          email: response.doctor?.email || response.user?.email || email.trim(),
-          role: 'DOCTOR',
+        window.history.pushState({}, '', '/admin/dashboard');
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      } else if (isDoctor) {
+        login(token, 'STAFF', {
+          id: response.doctor?.id || user?.id,
+          name: response.doctor?.name || user?.name || 'Doctor',
+          email: response.doctor?.email || user?.email || email.trim(),
+          role: 'STAFF',
           staffRole: 'DOCTOR',
           specialization: response.doctor?.specialization,
           department: response.doctor?.department,
         });
-        window.history.pushState({}, '', '/doctor');
-        window.dispatchEvent(new PopStateEvent('popstate'));
-      } else if (isStaff) {
-        login(response.token, 'STAFF', {
-          id: response.staff?.id || response.user?.id,
-          name: response.user?.name || 'Staff Member',
-          email: response.user?.email || email.trim(),
-          role: 'STAFF',
-          staffRole: (staffRole as any) || 'RECEPTIONIST',
-          employeeCode: response.staff?.employeeCode,
-        });
-        window.history.pushState({}, '', '/staff');
-        window.dispatchEvent(new PopStateEvent('popstate'));
-      } else if (isAdmin) {
-        login(response.token, 'ADMIN', {
-          id: response.user?.id,
-          name: response.user?.name || 'Admin',
-          email: response.user?.email || email.trim(),
-          role: 'ADMIN',
-        });
-        window.history.pushState({}, '', '/admin');
+        window.history.pushState({}, '', '/doctor/dashboard');
         window.dispatchEvent(new PopStateEvent('popstate'));
       } else {
-        login(response.token, 'PATIENT', {
-          id: response.user?.id,
-          name: response.user?.name || name.trim() || 'Patient',
-          email: response.user?.email || email.trim(),
-          role: 'PATIENT',
+        // STAFF with any other staffRole
+        login(token, 'STAFF', {
+          id: response.staff?.id || user?.id,
+          name: user?.name || 'Staff Member',
+          email: user?.email || email.trim(),
+          role: 'STAFF',
+          staffRole: staffRole || 'RECEPTIONIST',
+          employeeCode: response.staff?.employeeCode,
         });
-        window.history.pushState({}, '', '/patient');
+        window.history.pushState({}, '', '/staff/dashboard');
         window.dispatchEvent(new PopStateEvent('popstate'));
       }
     } catch (submitError) {
       setError(
         submitError instanceof Error
           ? submitError.message
-          : 'Something went wrong. Please try again.'
+          : 'Invalid email or password. Please try again.'
       );
     } finally {
       setLoading(false);
@@ -181,6 +117,11 @@ export function LoginPage() {
     setNotice(
       'Password recovery is coming soon. Please contact your hospital administrator for now.'
     );
+  };
+
+  const goToRegister = () => {
+    window.history.pushState({}, '', '/register');
+    window.dispatchEvent(new PopStateEvent('popstate'));
   };
 
   return (
@@ -269,17 +210,9 @@ export function LoginPage() {
           <div className="form-heading">
             <p className="form-kicker">SECURE ACCESS</p>
 
-            <h2>
-              {mode === 'login' ? 'Welcome back.' : 'Create your account'}
-            </h2>
+            <h2>Welcome back.</h2>
 
-            <p>
-              {mode === 'login'
-                ? accountType === 'staff'
-                  ? 'Sign in to access your clinical or departmental staff workspace.'
-                  : 'Sign in to continue to your MediQ care workspace.'
-                : 'Set up your patient account in less than a minute.'}
-            </p>
+            <p>Sign in to continue to your MediQ care workspace.</p>
           </div>
 
           {sessionExpiredMessage && (
@@ -292,69 +225,7 @@ export function LoginPage() {
             </Alert>
           )}
 
-          <div
-            className="account-toggle"
-            role="tablist"
-            aria-label="Account type"
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={accountType === 'patient'}
-              className={accountType === 'patient' ? 'active' : ''}
-              onClick={() => handleAccountTypeChange('patient')}
-            >
-              <span className="toggle-icon" aria-hidden="true">
-                <Heart size={14} aria-hidden="true" />
-              </span>
-              Patient
-            </button>
-
-            <button
-              type="button"
-              role="tab"
-              aria-selected={accountType === 'staff'}
-              className={accountType === 'staff' ? 'active' : ''}
-              onClick={() => handleAccountTypeChange('staff')}
-            >
-              <span className="toggle-icon" aria-hidden="true">
-                <Shield size={14} aria-hidden="true" />
-              </span>
-              Staff
-            </button>
-          </div>
-
-          {mode === 'register' && (
-            <div className="info-banner">
-              <span aria-hidden="true">
-                <Sparkles size={16} aria-hidden="true" />
-              </span>
-
-              <div>
-                <strong>Patient registration</strong>
-                <br />
-                Use the same email and password you will use for future visits.
-              </div>
-            </div>
-          )}
-
           <form onSubmit={handleSubmit} noValidate>
-            {mode === 'register' && (
-              <label>
-                Full name
-                <div className="input-wrap">
-                  <span className="input-icon">⌁</span>
-
-                  <input
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Your full name"
-                    autoComplete="name"
-                  />
-                </div>
-              </label>
-            )}
-
             <label>
               Email address
               <div className="input-wrap">
@@ -364,11 +235,7 @@ export function LoginPage() {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder={
-                    accountType === 'staff'
-                      ? 'staff@hospital.org'
-                      : 'patient@example.com'
-                  }
+                  placeholder="name@hospital.org or patient@example.com"
                   autoComplete="email"
                   required
                 />
@@ -385,11 +252,7 @@ export function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter your password"
-                  autoComplete={
-                    mode === 'register'
-                      ? 'new-password'
-                      : 'current-password'
-                  }
+                  autoComplete="current-password"
                   minLength={6}
                   required
                 />
@@ -424,50 +287,34 @@ export function LoginPage() {
               type="submit"
               disabled={loading}
             >
-              <span>
-                {loading
-                  ? 'Connecting…'
-                  : mode === 'login'
-                    ? 'Sign in'
-                    : 'Create account'}
-              </span>
+              <span>{loading ? 'Connecting…' : 'Sign in'}</span>
 
               {!loading && <span className="arrow">→</span>}
             </button>
           </form>
 
           <div className="form-actions">
-            {mode === 'login' && (
-              <button
-                type="button"
-                className="text-button"
-                onClick={forgotPassword}
-              >
-                Forgot password?
-              </button>
-            )}
+            <button
+              type="button"
+              className="text-button"
+              onClick={forgotPassword}
+            >
+              Forgot password?
+            </button>
 
-            {accountType === 'patient' && (
-              <button
-                type="button"
-                className="text-button primary"
-                onClick={() =>
-                  switchMode(mode === 'login' ? 'register' : 'login')
-                }
-              >
-                {mode === 'login'
-                  ? 'Create an account'
-                  : 'Back to sign in'}
-              </button>
-            )}
+            <button
+              type="button"
+              className="text-button primary"
+              onClick={goToRegister}
+            >
+              New patient? Create an account
+            </button>
           </div>
 
-          {(accountType === 'staff' || accountType === 'doctor') && mode === 'login' && (
-            <div className="admin-note">
-              <span>i</span>
-              Hospital staff accounts (Doctors, Nurses, Receptionists, Admins) are provisioned by hospital administrators.
-            </div>
-          )}
+          <div className="admin-note">
+            <span>i</span>
+            Hospital staff, doctor, and administrator accounts are provisioned by hospital management.
+          </div>
 
           <div className="security-note">
             <span>▣</span>

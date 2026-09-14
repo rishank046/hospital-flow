@@ -1,4 +1,4 @@
-export type StaffRole = 'DOCTOR' | 'NURSE' | 'RECEPTIONIST' | 'LAB_STAFF' | 'PHARMACIST';
+export type StaffRole = 'DOCTOR' | 'NURSE' | 'RECEPTIONIST' | 'LAB_STAFF' | 'PHARMACIST' | 'LAB_TECH' | 'BILLING_CLERK';
 export type StaffStatus = 'ACTIVE' | 'INACTIVE' | 'ON_LEAVE';
 export type UserRole = 'PATIENT' | 'DOCTOR' | 'STAFF' | 'ADMIN';
 export type AccountType = 'patient' | 'doctor' | 'staff';
