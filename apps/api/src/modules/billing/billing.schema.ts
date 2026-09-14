@@ -27,5 +27,27 @@ export const invoiceIdParamSchema = z.object({
     id: z.string().uuid(),
 });
 
+export const enqueueCashQueueSchema = z.object({
+    visitId: z.string().uuid().optional(),
+    visit_id: z.string().uuid().optional(),
+    invoiceId: z.string().uuid().optional(),
+    invoice_id: z.string().uuid().optional(),
+    priority: z.number().int().optional().default(0),
+});
+
+export const cashQueueEntryIdParamSchema = z.object({
+    queueEntryId: z.string().uuid(),
+});
+
+export const payCashInvoiceSchema = z.object({
+    invoiceId: z.string().uuid().optional(),
+    invoice_id: z.string().uuid().optional(),
+    amountReceived: z.number().min(0).optional(),
+    amount_received: z.number().min(0).optional(),
+    notes: z.string().optional().nullable(),
+});
+
 export type GenerateInvoiceInput = z.infer<typeof generateInvoiceSchema>;
 export type PayInvoiceInput = z.infer<typeof payInvoiceSchema>;
+export type EnqueueCashQueueInput = z.infer<typeof enqueueCashQueueSchema>;
+export type PayCashInvoiceInput = z.infer<typeof payCashInvoiceSchema>;

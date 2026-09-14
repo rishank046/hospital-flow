@@ -2,7 +2,12 @@ import pool from "#database/pool.js";
 import { AppError } from "#utils/errorHandler.js";
 import type { AuthPayload } from "#types/auth.types.js";
 import { updateVisitStatusService } from "#modules/visits/visits.service.js";
-import type { GenerateInvoiceInput, PayInvoiceInput } from "./billing.schema.js";
+import type {
+    EnqueueCashQueueInput,
+    GenerateInvoiceInput,
+    PayCashInvoiceInput,
+    PayInvoiceInput,
+} from "./billing.schema.js";
 
 interface DerivedItem {
     description: string;
@@ -266,6 +271,17 @@ export async function payInvoiceService(
                 await updateVisitStatusService(invoice.visit_id, "COMPLETED", transitionAuth);
             }
         }
+
+        // Complete any active cash counter or billing queue entries for this visit
+        await pool.query(
+            `UPDATE "queue_entries"
+             SET status = 'COMPLETED',
+                 completed_at = CURRENT_TIMESTAMP
+             WHERE visit_id = $1
+               AND queue_type IN ('CASH_COUNTER', 'BILLING')
+               AND status IN ('WAITING', 'CALLED', 'IN_PROGRESS')`,
+            [invoice.visit_id]
+        );
     }
 
     const itemsRes = await pool.query(
@@ -371,4 +387,298 @@ export async function getInvoiceByIdService(id: string) {
 
 export const getInvoicesByVisitService = (visitId: string) => getInvoicesService(visitId);
 export const listInvoicesService = (visitId?: string, patientId?: string, status?: string) => getInvoicesService(visitId, patientId, status);
+
+export async function enqueueCashCounterService(
+    data: EnqueueCashQueueInput,
+    authUser?: AuthPayload
+) {
+    let visitId = data.visitId || data.visit_id;
+    const invoiceId = data.invoiceId || data.invoice_id;
+
+    if (!visitId && invoiceId) {
+        const inv = await pool.query<{ visit_id: string }>(
+            'SELECT visit_id FROM "invoices" WHERE id = $1',
+            [invoiceId]
+        );
+        if (inv.rowCount && inv.rows[0]) {
+            visitId = inv.rows[0].visit_id;
+        }
+    }
+
+    if (!visitId) {
+        throw new AppError("visitId or invoiceId is required", 400);
+    }
+
+    // Verify visit exists
+    const visitRes = await pool.query<{ id: string; patient_id: string; status: string }>(
+        'SELECT id, patient_id, status FROM "visits" WHERE id = $1',
+        [visitId]
+    );
+
+    if (visitRes.rowCount === 0 || !visitRes.rows[0]) {
+        throw new AppError("Visit not found", 404);
+    }
+
+    const visit = visitRes.rows[0];
+
+    // Ensure invoice exists or generate one
+    let targetInvoiceId = invoiceId;
+    if (!targetInvoiceId) {
+        const existingInv = await pool.query<{ id: string }>(
+            'SELECT id FROM "invoices" WHERE visit_id = $1 AND status = \'PENDING\' ORDER BY created_at DESC LIMIT 1',
+            [visitId]
+        );
+        if (existingInv.rowCount && existingInv.rows[0]) {
+            targetInvoiceId = existingInv.rows[0].id;
+        } else {
+            const generated = await generateInvoiceService(visitId, undefined, authUser);
+            targetInvoiceId = generated.id;
+        }
+    }
+
+    // Check if an active cash counter entry already exists
+    const activeRes = await pool.query(
+        `SELECT * FROM "queue_entries"
+         WHERE visit_id = $1
+           AND queue_type IN ('CASH_COUNTER', 'BILLING')
+           AND status IN ('WAITING', 'CALLED', 'IN_PROGRESS')
+         LIMIT 1`,
+        [visitId]
+    );
+
+    let queueEntryRow: Record<string, unknown>;
+
+    if (activeRes.rowCount && activeRes.rows[0]) {
+        queueEntryRow = activeRes.rows[0];
+    } else {
+        const insertRes = await pool.query(
+            `INSERT INTO "queue_entries" (
+                visit_id,
+                queue_type,
+                priority,
+                status,
+                joined_at
+             )
+             VALUES ($1, 'CASH_COUNTER', $2, 'WAITING', CURRENT_TIMESTAMP)
+             RETURNING *`,
+            [visitId, data.priority ?? 0]
+        );
+        queueEntryRow = insertRes.rows[0];
+    }
+
+    // Advance visit status to BILLING if not yet BILLING or COMPLETED
+    const freshVisit = await pool.query<{ status: string }>(
+        'SELECT status FROM "visits" WHERE id = $1',
+        [visitId]
+    );
+    const freshStatus = freshVisit.rows[0]?.status;
+    if (freshStatus && freshStatus !== "BILLING" && freshStatus !== "COMPLETED") {
+        const transitionAuth: AuthPayload = {
+            userId: authUser?.userId || "system",
+            email: authUser?.email || "system@hospital.internal",
+            role: "STAFF",
+            staffRole: (authUser?.staffRole as any) || "BILLING_CLERK",
+        };
+        await updateVisitStatusService(visitId, "BILLING", transitionAuth);
+    }
+
+    // Calculate queue position
+    const posRes = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) as count
+         FROM "queue_entries"
+         WHERE queue_type IN ('CASH_COUNTER', 'BILLING')
+           AND status IN ('WAITING', 'CALLED')
+           AND (priority > $1 OR (priority = $1 AND joined_at <= $2))`,
+        [queueEntryRow.priority, queueEntryRow.joined_at]
+    );
+
+    const position = Number(posRes.rows[0]?.count ?? 1);
+
+    return {
+        ...queueEntryRow,
+        type: queueEntryRow.queue_type,
+        visit_id: queueEntryRow.visit_id,
+        visitId: queueEntryRow.visit_id,
+        invoiceId: targetInvoiceId,
+        invoice_id: targetInvoiceId,
+        position,
+        message: "Patient queued at cash counter",
+    };
+}
+
+export async function getCashCounterQueueService() {
+    const query = `
+        SELECT 
+            q.id,
+            q.visit_id,
+            q.visit_id as "visitId",
+            q.queue_type,
+            CASE WHEN q.priority >= 10 THEN 'EMERGENCY' ELSE q.queue_type::text END as type,
+            q.priority,
+            q.status,
+            q.token_number,
+            q.joined_at,
+            q.called_at,
+            q.started_at,
+            q.created_at,
+            v.patient_id,
+            v.patient_id as "patientId",
+            p.name as patient_name,
+            p.gender as patient_gender,
+            EXTRACT(YEAR FROM age(p.date_of_birth))::int as patient_age,
+            inv.id as invoice_id,
+            inv.id as "invoiceId",
+            inv.total_amount,
+            inv.total_amount as amount,
+            inv.status as invoice_status
+        FROM "queue_entries" q
+        JOIN "visits" v ON q.visit_id = v.id
+        JOIN "patient_profiles" p ON v.patient_id = p.id
+        LEFT JOIN "invoices" inv ON inv.visit_id = v.id AND inv.status = 'PENDING'
+        WHERE q.queue_type IN ('CASH_COUNTER', 'BILLING')
+          AND q.status IN ('WAITING', 'CALLED', 'IN_PROGRESS')
+        ORDER BY q.priority DESC, q.joined_at ASC
+    `;
+
+    const res = await pool.query(query);
+    const queue = res.rows.map((row, index) => ({
+        ...row,
+        position: index + 1,
+    }));
+
+    const waitingCount = queue.filter((r) => r.status === "WAITING").length;
+    const currentServing =
+        queue.find((r) => r.status === "IN_PROGRESS" || r.status === "CALLED") || null;
+
+    return {
+        queue,
+        waitingCount,
+        currentServing,
+    };
+}
+
+export async function callNextCashCounterService() {
+    const nextRes = await pool.query<{ id: string }>(
+        `SELECT id
+         FROM "queue_entries"
+         WHERE queue_type IN ('CASH_COUNTER', 'BILLING')
+           AND status = 'WAITING'
+         ORDER BY priority DESC, joined_at ASC
+         LIMIT 1`
+    );
+
+    if (nextRes.rowCount === 0 || !nextRes.rows[0]) {
+        return null;
+    }
+
+    const nextId = nextRes.rows[0].id;
+    await pool.query(
+        `UPDATE "queue_entries"
+         SET status = 'CALLED',
+             called_at = CURRENT_TIMESTAMP
+         WHERE id = $1`,
+        [nextId]
+    );
+
+    const detailedRes = await pool.query(
+        `SELECT 
+            q.*,
+            v.patient_id,
+            v.patient_id as "patientId",
+            p.name as patient_name,
+            inv.id as invoice_id,
+            inv.id as "invoiceId",
+            inv.total_amount,
+            inv.total_amount as amount
+         FROM "queue_entries" q
+         JOIN "visits" v ON q.visit_id = v.id
+         JOIN "patient_profiles" p ON v.patient_id = p.id
+         LEFT JOIN "invoices" inv ON inv.visit_id = v.id AND inv.status = 'PENDING'
+         WHERE q.id = $1`,
+        [nextId]
+    );
+
+    const row = detailedRes.rows[0];
+    return row
+        ? {
+              ...row,
+              type: row.queue_type,
+              visitId: row.visit_id,
+              visit_id: row.visit_id,
+          }
+        : null;
+}
+
+export async function payCashInvoiceService(
+    queueEntryId: string,
+    data?: PayCashInvoiceInput,
+    authUser?: AuthPayload
+) {
+    // 1. Look up queue entry
+    const entryRes = await pool.query(
+        'SELECT * FROM "queue_entries" WHERE id = $1',
+        [queueEntryId]
+    );
+
+    let visitId: string | null = null;
+    if (entryRes.rowCount && entryRes.rows[0]) {
+        visitId = entryRes.rows[0].visit_id;
+    }
+
+    // 2. Resolve invoice
+    let invoiceRes;
+    const specifiedInvoiceId = data?.invoiceId || data?.invoice_id;
+
+    if (specifiedInvoiceId) {
+        invoiceRes = await pool.query('SELECT * FROM "invoices" WHERE id = $1', [specifiedInvoiceId]);
+    } else if (visitId) {
+        invoiceRes = await pool.query(
+            'SELECT * FROM "invoices" WHERE visit_id = $1 AND status = \'PENDING\' ORDER BY created_at DESC LIMIT 1',
+            [visitId]
+        );
+    } else {
+        // Fallback: check if queueEntryId was actually passed as an invoiceId
+        invoiceRes = await pool.query('SELECT * FROM "invoices" WHERE id = $1', [queueEntryId]);
+    }
+
+    if (!invoiceRes || invoiceRes.rowCount === 0 || !invoiceRes.rows[0]) {
+        throw new AppError("Invoice not found for this cash queue entry", 404);
+    }
+
+    const invoice = invoiceRes.rows[0];
+    const totalAmount = Number(invoice.total_amount);
+    const amountReceived = data?.amountReceived ?? data?.amount_received ?? totalAmount;
+
+    if (amountReceived < totalAmount) {
+        throw new AppError(
+            `Insufficient cash received: expected at least ${totalAmount}, but received ${amountReceived}`,
+            400
+        );
+    }
+
+    const changeDue = Number((amountReceived - totalAmount).toFixed(2));
+
+    // 3. Mark invoice as PAID via payInvoiceService
+    const paidResult = await payInvoiceService(invoice.id, { paymentMethod: "CASH", amountPaid: amountReceived }, authUser);
+
+    // 4. Mark queue entry completed if it was found
+    if (entryRes.rowCount && entryRes.rows[0]) {
+        await pool.query(
+            `UPDATE "queue_entries"
+             SET status = 'COMPLETED',
+                 completed_at = CURRENT_TIMESTAMP
+             WHERE id = $1`,
+            [queueEntryId]
+        );
+    }
+
+    return {
+        ...paidResult,
+        queueEntryId,
+        amountReceived,
+        totalAmount,
+        changeDue,
+        message: "Cash payment received and visit completed",
+    };
+}
 

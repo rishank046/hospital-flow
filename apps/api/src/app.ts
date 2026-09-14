@@ -12,6 +12,7 @@ import billingRoute from "#modules/billing/billing.route.js";
 import consultationsRoute from "#modules/consultations/consultations.route.js";
 import prescriptionsRoute from "#modules/prescriptions/prescriptions.route.js";
 import labOrdersRoute from "#modules/lab-orders/lab-orders.route.js";
+import workflowRoute from "#modules/workflow/workflow.route.js";
 import errorHandler from "#utils/errorHandler.js";
 
 const app = express();
@@ -33,6 +34,7 @@ app.use("/billing", billingRoute);
 app.use("/consultations", consultationsRoute);
 app.use("/prescriptions", prescriptionsRoute);
 app.use("/lab-orders", labOrdersRoute);
+app.use("/workflow", workflowRoute);
 app.use(errorHandler);
 
 export default app;

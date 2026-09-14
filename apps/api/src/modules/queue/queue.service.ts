@@ -46,7 +46,7 @@ export async function joinQueueService(data: JoinQueueInput, authUser?: AuthPayl
     const rawType = (data.type ?? "WALKIN").toUpperCase();
     let priority = data.priority ?? 0;
 
-    let queueType: "APPOINTMENT" | "WALKIN" | "DIAGNOSTICS" | "PHARMACY" | "BILLING" = "WALKIN";
+    let queueType: "APPOINTMENT" | "WALKIN" | "DIAGNOSTICS" | "PHARMACY" | "BILLING" | "CASH_COUNTER" = "WALKIN";
     if (rawType === "APPOINTMENT") {
         queueType = "APPOINTMENT";
     } else if (rawType === "DIAGNOSTICS") {
@@ -55,6 +55,8 @@ export async function joinQueueService(data: JoinQueueInput, authUser?: AuthPayl
         queueType = "PHARMACY";
     } else if (rawType === "BILLING") {
         queueType = "BILLING";
+    } else if (rawType === "CASH_COUNTER") {
+        queueType = "CASH_COUNTER";
     } else if (rawType === "EMERGENCY") {
         // Emergency walk-ins get an automatic priority bump when the caller
         // did not specify one. The enum has no EMERGENCY value, so it is
@@ -250,6 +252,7 @@ export async function getQueueService(filter: QueueFilterQuery) {
             q.doctor_id,
             q.doctor_id as "doctorId",
             u.name as doctor_name,
+            COALESCE(d.consultation_minutes, 15) as consultation_minutes,
             q.department_id,
             q.department_id as "departmentId",
             dept.name as department_name,
@@ -276,16 +279,12 @@ export async function getQueueService(filter: QueueFilterQuery) {
     `;
 
     const res = await pool.query(query, params);
-    const queue = res.rows.map((row, index) => ({
-        ...row,
-        position: index + 1,
-    }));
 
-    const waitingCount = queue.filter((r) => r.status === "WAITING").length;
+    const waitingCount = res.rows.filter((r) => r.status === "WAITING").length;
 
     let currentServing =
-        queue.find((r) => r.status === "IN_PROGRESS" || r.status === "SERVING") ||
-        queue.find((r) => r.status === "CALLED") ||
+        res.rows.find((r) => r.status === "IN_PROGRESS" || r.status === "SERVING") ||
+        res.rows.find((r) => r.status === "CALLED") ||
         null;
 
     if (!currentServing && filter.doctorId && filter.status) {
@@ -298,7 +297,9 @@ export async function getQueueService(filter: QueueFilterQuery) {
                 p.name as patient_name,
                 q.doctor_id,
                 u.name as doctor_name,
-                q.status
+                q.status,
+                q.started_at,
+                q.called_at
              FROM "queue_entries" q
              JOIN "visits" v ON q.visit_id = v.id
              JOIN "patient_profiles" p ON v.patient_id = p.id
@@ -315,6 +316,47 @@ export async function getQueueService(filter: QueueFilterQuery) {
             currentServing = servingRes.rows[0];
         }
     }
+
+    const waitingPerDoctor = new Map<string, number>();
+    const queue = res.rows.map((row, index) => {
+        const docKey = row.doctor_id || "unassigned";
+        const isWaiting = row.status === "WAITING";
+        const waitingAhead = isWaiting ? (waitingPerDoctor.get(docKey) ?? 0) : 0;
+        if (isWaiting) {
+            waitingPerDoctor.set(docKey, waitingAhead + 1);
+        }
+
+        const consultationMinutes = Number(row.consultation_minutes) || 15;
+        let remainingCurrent = 0;
+        if (currentServing && (currentServing.doctor_id === row.doctor_id || !row.doctor_id)) {
+            const startTimestamp = currentServing.started_at || currentServing.called_at || currentServing.joined_at;
+            const elapsed = startTimestamp
+                ? Math.max(0, Math.floor((Date.now() - new Date(startTimestamp).getTime()) / 60000))
+                : 0;
+            remainingCurrent = Math.max(2, consultationMinutes - elapsed);
+        }
+
+        const estimatedWaitMinutes = isWaiting
+            ? (waitingAhead * consultationMinutes) + remainingCurrent
+            : 0;
+
+        const minWait = Math.max(0, Math.floor(estimatedWaitMinutes * 0.8));
+        const maxWait = Math.ceil(estimatedWaitMinutes * 1.2) + (estimatedWaitMinutes === 0 ? 0 : 3);
+        const estimatedWaitWindow = estimatedWaitMinutes === 0 ? "0 mins" : `${minWait} - ${maxWait} mins`;
+
+        return {
+            ...row,
+            position: index + 1,
+            consultation_minutes: consultationMinutes,
+            consultationMinutes,
+            patients_ahead: waitingAhead,
+            patientsAhead: waitingAhead,
+            estimated_wait_minutes: estimatedWaitMinutes,
+            estimatedWaitMinutes,
+            estimated_wait_window: estimatedWaitWindow,
+            estimatedWaitWindow,
+        };
+    });
 
     return {
         queue,
@@ -497,6 +539,131 @@ export async function skipQueueEntryService(queueEntryId: string, doctorId?: str
     };
 }
 
+export async function skipDoctorActiveEntryService(doctorId: string) {
+    const activeRes = await pool.query<QueueEntryRow>(
+        `SELECT id
+         FROM "queue_entries"
+         WHERE doctor_id = $1 AND status IN ('CALLED', 'IN_PROGRESS')
+         ORDER BY CASE WHEN status = 'IN_PROGRESS' THEN 1 ELSE 2 END, started_at DESC NULLS LAST
+         LIMIT 1`,
+        [doctorId]
+    );
+
+    if (activeRes.rowCount === 0 || !activeRes.rows[0]) {
+        throw new AppError("No active consultation found to skip", 404);
+    }
+
+    return skipQueueEntryService(activeRes.rows[0].id, doctorId);
+}
+
+export async function requeueQueueEntryService(
+    queueEntryId: string,
+    doctorId?: string,
+    _authUser?: AuthPayload,
+    options?: { strategy?: "fair" | "top" | "end"; priority?: number | undefined }
+) {
+    const checkRes = await pool.query<QueueEntryRow>(
+        'SELECT * FROM "queue_entries" WHERE id = $1',
+        [queueEntryId]
+    );
+
+    if (checkRes.rowCount === 0 || !checkRes.rows[0]) {
+        throw new AppError("Queue entry not found", 404);
+    }
+
+    const entry = checkRes.rows[0];
+
+    if (doctorId && entry.doctor_id && entry.doctor_id !== doctorId) {
+        throw new AppError("Forbidden: this queue entry belongs to another doctor", 403);
+    }
+
+    if (entry.status !== "SKIPPED" && entry.status !== "CANCELLED") {
+        throw new AppError(
+            `Cannot re-queue an entry with status ${entry.status}. Only SKIPPED or CANCELLED entries can be re-queued`,
+            400
+        );
+    }
+
+    const strategy = options?.strategy || "fair";
+    const newPriority = options?.priority ?? entry.priority;
+
+    // Get current waiting entries for this doctor
+    const waitingRes = await pool.query<{ id: string; joined_at: Date; priority: number }>(
+        `SELECT id, joined_at, priority
+         FROM "queue_entries"
+         WHERE status = 'WAITING'
+           AND (($1::uuid IS NULL AND doctor_id IS NULL) OR doctor_id = $1::uuid)
+         ORDER BY priority DESC, joined_at ASC`,
+        [entry.doctor_id]
+    );
+
+    const waiting = waitingRes.rows;
+    let newJoinedAt: Date;
+
+    if (strategy === "top") {
+        if (waiting.length > 0 && waiting[0]) {
+            newJoinedAt = new Date(new Date(waiting[0].joined_at).getTime() - 1000);
+        } else {
+            newJoinedAt = new Date();
+        }
+    } else if (strategy === "end") {
+        newJoinedAt = new Date();
+    } else {
+        // "fair" strategy: place right behind the 1st waiting patient
+        if (waiting.length === 0 || !waiting[0]) {
+            newJoinedAt = new Date();
+        } else if (waiting.length === 1 || !waiting[1]) {
+            newJoinedAt = new Date(new Date(waiting[0].joined_at).getTime() + 1000);
+        } else {
+            const tFirst = new Date(waiting[0].joined_at).getTime();
+            const tSecond = new Date(waiting[1].joined_at).getTime();
+            const midpoint = Math.floor((tFirst + tSecond) / 2);
+            newJoinedAt = midpoint > tFirst ? new Date(midpoint) : new Date(tFirst + 1000);
+        }
+    }
+
+    const updateRes = await pool.query<QueueEntryRow>(
+        `UPDATE "queue_entries"
+         SET status = 'WAITING',
+             priority = $1,
+             joined_at = $2,
+             called_at = NULL,
+             started_at = NULL,
+             completed_at = NULL
+         WHERE id = $3
+         RETURNING *`,
+        [newPriority, newJoinedAt, queueEntryId]
+    );
+
+    const updated = updateRes.rows[0];
+    if (!updated) {
+        throw new AppError("Failed to update queue entry", 500);
+    }
+
+    // If visit was IN_CONSULTATION, restore to WAITING_OPD
+    if (entry.visit_id) {
+        await pool.query(
+            `UPDATE "visits"
+             SET status = 'WAITING_OPD',
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = $1 AND status IN ('IN_CONSULTATION')`,
+            [entry.visit_id]
+        );
+    }
+
+    const newPosition = await calculateQueuePosition(updated.doctor_id, updated.priority, updated.joined_at);
+
+    return {
+        ...updated,
+        type: updated.queue_type,
+        visitId: updated.visit_id,
+        visit_id: updated.visit_id,
+        position: newPosition,
+        strategy,
+        message: "Patient successfully re-queued",
+    };
+}
+
 export async function getMyPatientQueueStatusService(userId: string) {
     const res = await pool.query(
         `SELECT 
@@ -510,6 +677,7 @@ export async function getMyPatientQueueStatusService(userId: string) {
             q.doctor_id as "doctorId",
             u.name as doctor_name,
             d.specialization as doctor_specialization,
+            COALESCE(d.consultation_minutes, 15) as consultation_minutes,
             dept.name as department_name,
             CASE WHEN q.priority >= 10 THEN 'EMERGENCY' ELSE q.queue_type::text END as type,
             q.priority,
@@ -565,7 +733,9 @@ export async function getMyPatientQueueStatusService(userId: string) {
             p.name as patient_name,
             q.doctor_id,
             u.name as doctor_name,
-            q.status
+            q.status,
+            q.started_at,
+            q.called_at
          FROM "queue_entries" q
          JOIN "visits" v ON q.visit_id = v.id
          JOIN "patient_profiles" p ON v.patient_id = p.id
@@ -581,15 +751,49 @@ export async function getMyPatientQueueStatusService(userId: string) {
 
     const currentServing = servingRes.rowCount && servingRes.rows[0] ? servingRes.rows[0] : null;
 
+    const consultationMinutes = Number(entry.consultation_minutes || 15);
+    const patientsAhead = Math.max(0, position - 1);
+
+    let remainingMinutes = 0;
+    if (currentServing) {
+        const startTime = currentServing.started_at || currentServing.called_at;
+        const elapsed = startTime ? Math.max(0, Math.floor((Date.now() - new Date(startTime).getTime()) / 60000)) : 0;
+        remainingMinutes = Math.max(2, consultationMinutes - elapsed);
+    }
+
+    const estimatedWaitMinutes = entry.status === "WAITING"
+        ? (patientsAhead * consultationMinutes) + remainingMinutes
+        : 0;
+
+    const minWait = Math.max(0, Math.floor(estimatedWaitMinutes * 0.8));
+    const maxWait = Math.ceil(estimatedWaitMinutes * 1.2) + (estimatedWaitMinutes === 0 ? 0 : 3);
+    const estimatedWaitWindow = estimatedWaitMinutes === 0 ? "0 mins" : `${minWait} - ${maxWait} mins`;
+
     return {
         queueEntry: {
             ...entry,
             visit_id: entry.visit_id,
             visitId: entry.visit_id,
+            consultationMinutes,
+            consultation_minutes: consultationMinutes,
+            patientsAhead,
+            patients_ahead: patientsAhead,
+            estimatedWaitMinutes,
+            estimated_wait_minutes: estimatedWaitMinutes,
+            estimatedWaitWindow,
+            estimated_wait_window: estimatedWaitWindow,
         },
         position,
         waitingCount,
         currentServing,
+        consultationMinutes,
+        consultation_minutes: consultationMinutes,
+        patientsAhead,
+        patients_ahead: patientsAhead,
+        estimatedWaitMinutes,
+        estimated_wait_minutes: estimatedWaitMinutes,
+        estimatedWaitWindow,
+        estimated_wait_window: estimatedWaitWindow,
     };
 }
 

@@ -5,6 +5,7 @@ import {
     joinQueueSchema,
     queueEntryIdParamSchema,
     queueFilterQuerySchema,
+    requeueQueueSchema,
 } from "./queue.schema.js";
 import {
     callNextService,
@@ -13,6 +14,8 @@ import {
     getMyPatientQueueStatusService,
     getQueueService,
     joinQueueService,
+    requeueQueueEntryService,
+    skipDoctorActiveEntryService,
     skipQueueEntryService,
     startServingService,
 } from "./queue.service.js";
@@ -64,9 +67,39 @@ export async function completeQueueEntry(request: Request, response: Response) {
 }
 
 export async function skipQueueEntry(request: Request, response: Response) {
-    const doctorId = await getDoctorId(request);
+    const authUser = request.user || request.tokenPayload;
+    let doctorId: string | undefined;
+    if (authUser?.role === "STAFF" && authUser.staffRole === "DOCTOR") {
+        try {
+            doctorId = await getDoctorId(request);
+        } catch {
+            // proceed as general staff
+        }
+    }
     const { queueEntryId } = queueEntryIdParamSchema.parse(request.params);
     const result = await skipQueueEntryService(queueEntryId, doctorId);
+    response.status(200).json(result);
+}
+
+export async function skipDoctorActive(request: Request, response: Response) {
+    const doctorId = await getDoctorId(request);
+    const result = await skipDoctorActiveEntryService(doctorId);
+    response.status(200).json(result);
+}
+
+export async function requeueQueueEntry(request: Request, response: Response) {
+    const authUser = request.user || request.tokenPayload;
+    let doctorId: string | undefined;
+    if (authUser?.role === "STAFF" && authUser.staffRole === "DOCTOR") {
+        try {
+            doctorId = await getDoctorId(request);
+        } catch {
+            // proceed as general staff
+        }
+    }
+    const { queueEntryId } = queueEntryIdParamSchema.parse(request.params);
+    const parsed = requeueQueueSchema.parse(request.body || {});
+    const result = await requeueQueueEntryService(queueEntryId, doctorId, authUser, parsed);
     response.status(200).json(result);
 }
 
