@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { AuthProvider } from './context/AuthContext';
 import { useAuth } from './hooks/useAuth';
 import { ProtectedRoute } from './components/layout/ProtectedRoute';
+import { LoadingScreen } from './components/common/LoadingScreen';
 import { LoginPage } from './pages/auth/LoginPage';
 import { RegisterPage } from './pages/auth/RegisterPage';
 import { PatientDashboard } from './pages/patient/PatientDashboard';
@@ -94,7 +95,12 @@ function Router() {
   // Public authentication routes
   if (path === '/' || path === '/login') {
     if (loading) {
-      return <div className="loading-screen">Verifying session...</div>;
+      return (
+        <LoadingScreen
+          message="Checking MediQ session..."
+          supportingText="Connecting to clinical operations gateway"
+        />
+      );
     }
     if (isAuthenticated && role) {
       if (role === 'ADMIN') {

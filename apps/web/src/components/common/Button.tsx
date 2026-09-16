@@ -5,6 +5,7 @@ export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'outline';
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode;
   variant?: ButtonVariant;
+  size?: 'sm' | 'md' | 'lg';
   loading?: boolean;
   icon?: ReactNode;
 }
@@ -12,6 +13,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 export function Button({
   children,
   variant = 'primary',
+  size,
   loading = false,
   disabled,
   icon,
@@ -19,7 +21,8 @@ export function Button({
   ...rest
 }: ButtonProps) {
   const variantClass = `btn-${variant}`;
-  const classes = ['btn', variantClass, className].filter(Boolean).join(' ');
+  const sizeClass = size ? `btn-${size}` : '';
+  const classes = ['btn', variantClass, sizeClass, className].filter(Boolean).join(' ');
 
   return (
     <button

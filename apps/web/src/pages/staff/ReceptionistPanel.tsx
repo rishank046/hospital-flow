@@ -15,6 +15,7 @@ import { Button } from '../../components/common/Button';
 import { Input } from '../../components/common/Input';
 import { Alert } from '../../components/common/Alert';
 import { Spinner } from '../../components/common/Spinner';
+import { EmptyState } from '../../components/common/EmptyState';
 import { staffService } from '../../services/staff.service';
 import type {
   DoctorSummary,
@@ -29,6 +30,7 @@ export function ReceptionistPanel() {
   const [doctors, setDoctors] = useState<DoctorSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Registration Mode
   const [registrationMode, setRegistrationMode] = useState<'walkin' | 'existing'>('walkin');
@@ -57,6 +59,7 @@ export function ReceptionistPanel() {
   const loadData = async () => {
     setLoading(true);
     setError(null);
+    setActionError(null);
     try {
       const [visitsData, patientsData, doctorsData] = await Promise.all([
         staffService.getVisits(),
@@ -194,12 +197,13 @@ export function ReceptionistPanel() {
 
   const handleSendToVitals = async (visitId: string) => {
     setTransitioningId(visitId);
+    setActionError(null);
     try {
       await staffService.updateVisitStatus(visitId, 'VITALS');
       const updated = await staffService.getVisits();
       setVisits(updated);
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to advance visit status.');
+      setActionError(err instanceof Error ? err.message : 'Failed to advance visit to vitals.');
     } finally {
       setTransitioningId(null);
     }
@@ -244,6 +248,10 @@ export function ReceptionistPanel() {
     }
   };
 
+  const awaitingVitalsCount = visits.filter((v) => v.status === 'REGISTERED').length;
+  const activeCareCount = visits.filter((v) => v.status !== 'COMPLETED' && v.status !== 'CANCELLED').length;
+  const completedCount = visits.filter((v) => v.status === 'COMPLETED').length;
+
   return (
     <div className="receptionist-panel">
       {error && (
@@ -252,52 +260,212 @@ export function ReceptionistPanel() {
         </Alert>
       )}
 
-      {/* Registration Section */}
-      <Card className="mb-6">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-          <div>
-            <h3 className="section-title" style={{ margin: 0 }}>
-              Patient Intake & Walk-in Check-in
-            </h3>
-            <p className="text-secondary text-sm" style={{ margin: 0 }}>
-              Register walk-in arrivals or check in registered patients for clinical care.
-            </p>
-          </div>
+      {actionError && (
+        <Alert type="error" className="mb-4" onClose={() => setActionError(null)}>
+          {actionError}
+        </Alert>
+      )}
 
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <Button
-              variant={registrationMode === 'walkin' ? 'primary' : 'outline'}
-              onClick={() => {
-                setRegistrationMode('walkin');
-                setFormError(null);
-                setSuccessMessage(null);
-              }}
-              icon={<UserPlus size={16} />}
-            >
-              New Walk-in
-            </Button>
-            <Button
-              variant={registrationMode === 'existing' ? 'primary' : 'outline'}
-              onClick={() => {
-                setRegistrationMode('existing');
-                setFormError(null);
-                setSuccessMessage(null);
-              }}
-              icon={<UserCheck size={16} />}
-            >
-              Existing Patient
-            </Button>
+      {/* Workspace Header */}
+      <div className="station-header">
+        <div className="station-header-info">
+          <h3>
+            <UserCheck size={20} aria-hidden="true" />
+            Reception & Outpatient Intake
+          </h3>
+          <p>Register walk-in arrivals, verify active encounters, and route patients to clinical triage</p>
+        </div>
+
+        <div className="station-header-actions">
+          <Button
+            variant={registrationMode === 'walkin' ? 'primary' : 'outline'}
+            onClick={() => {
+              setRegistrationMode('walkin');
+              setFormError(null);
+              setSuccessMessage(null);
+            }}
+            icon={<UserPlus size={16} />}
+          >
+            New Walk-in
+          </Button>
+          <Button
+            variant={registrationMode === 'existing' ? 'primary' : 'outline'}
+            onClick={() => {
+              setRegistrationMode('existing');
+              setFormError(null);
+              setSuccessMessage(null);
+            }}
+            icon={<UserCheck size={16} />}
+          >
+            Existing Patient
+          </Button>
+          <Button
+            variant="outline"
+            onClick={loadData}
+            loading={loading}
+            icon={<RefreshCw size={16} />}
+          >
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      {/* KPI Workload Summary (Section 12) */}
+      <div className="metrics-summary-row mb-6">
+        <Card className="summary-stat-card">
+          <span className="stat-label">Awaiting Vitals</span>
+          <strong className="stat-value">{awaitingVitalsCount}</strong>
+          <span className="stat-hint">Patients queued for triage station</span>
+        </Card>
+
+        <Card className="summary-stat-card">
+          <span className="stat-label">Active Care Stream</span>
+          <strong className="stat-value">{activeCareCount}</strong>
+          <span className="stat-hint">Visits currently in progress</span>
+        </Card>
+
+        <Card className="summary-stat-card">
+          <span className="stat-label">Completed Visits</span>
+          <strong className="stat-value">{completedCount}</strong>
+          <span className="stat-hint">Encounters finished today</span>
+        </Card>
+
+        <Card className="summary-stat-card">
+          <span className="stat-label">Total Registered</span>
+          <strong className="stat-value">{visits.length}</strong>
+          <span className="stat-hint">Total OPD intake records today</span>
+        </Card>
+      </div>
+
+      {/* Primary Queue / Data Area */}
+      <Card className="mb-6">
+        <div className="station-header" style={{ marginBottom: '14px' }}>
+          <div className="station-header-info">
+            <h3 style={{ fontSize: '18px' }}>
+              Patient Visits Directory ({filteredVisits.length})
+            </h3>
+            <p>Live register of patient encounters and status progression</p>
           </div>
         </div>
 
+        {/* Filter / Search Controls */}
+        <div className="station-filter-bar">
+          <div className="station-search-box">
+            <Input
+              placeholder="Search visits by patient, doctor, or ID..."
+              value={visitSearch}
+              onChange={(e) => setVisitSearch(e.target.value)}
+              leftIcon={<Search size={16} />}
+            />
+          </div>
+
+          <select
+            className="station-filter-select"
+            value={visitStatusFilter}
+            onChange={(e) => setVisitStatusFilter(e.target.value)}
+            aria-label="Filter visits by status"
+          >
+            <option value="ALL">All Visit Statuses ({visits.length})</option>
+            <option value="REGISTERED">REGISTERED</option>
+            <option value="VITALS">VITALS</option>
+            <option value="WAITING_OPD">WAITING_OPD</option>
+            <option value="IN_CONSULTATION">IN_CONSULTATION</option>
+            <option value="COMPLETED">COMPLETED</option>
+            <option value="CANCELLED">CANCELLED</option>
+          </select>
+        </div>
+
+        {loading ? (
+          <Spinner label="Loading visits queue..." />
+        ) : filteredVisits.length === 0 ? (
+          <EmptyState
+            icon={Clock}
+            title="No visits found"
+            description="No patient visits match your search criteria. Register a walk-in patient or check in an existing patient below."
+          />
+        ) : (
+          <div className="table-responsive">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Visit ID</th>
+                  <th>Patient Name</th>
+                  <th>Visit Type</th>
+                  <th>Assigned Doctor</th>
+                  <th>Status</th>
+                  <th>Registered At</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredVisits.map((v) => (
+                  <tr key={v.id}>
+                    <td className="cell-id">{v.id.slice(0, 8)}</td>
+                    <td className="cell-name">{v.patient_name || 'Patient'}</td>
+                    <td>
+                      <Badge variant="neutral" size="sm">
+                        {v.visit_type}
+                      </Badge>
+                    </td>
+                    <td className="cell-meta">
+                      {v.doctor_name ? `Dr. ${v.doctor_name}` : 'Unassigned'}
+                    </td>
+                    <td>
+                      <Badge variant={getStatusBadgeVariant(v.status)} size="sm">
+                        {v.status}
+                      </Badge>
+                    </td>
+                    <td className="cell-meta">
+                      {new Date(v.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </td>
+                    <td className="cell-actions">
+                      {v.status === 'REGISTERED' && (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => handleSendToVitals(v.id)}
+                          loading={transitioningId === v.id}
+                          icon={<ArrowRight size={14} />}
+                        >
+                          Send to Vitals
+                        </Button>
+                      )}
+                      {v.status === 'VITALS' && (
+                        <span className="text-secondary text-xs">Awaiting Vitals</span>
+                      )}
+                      {v.status !== 'REGISTERED' && v.status !== 'VITALS' && (
+                        <span className="text-secondary text-xs">In Care Stream</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {/* Secondary Operational Context: Intake & Registration */}
+      <Card>
+        <div style={{ marginBottom: '16px' }}>
+          <h3 className="section-title" style={{ margin: '0 0 4px', fontSize: '18px' }}>
+            {registrationMode === 'walkin' ? 'Register New Walk-in Patient' : 'Check In Registered Patient'}
+          </h3>
+          <p className="text-secondary text-sm" style={{ margin: 0 }}>
+            {registrationMode === 'walkin'
+              ? 'Create a temporary walk-in patient profile and queue them for triage'
+              : 'Search the existing patient directory and create a new visit encounter'}
+          </p>
+        </div>
+
         {formError && (
-          <Alert type="error" className="mb-4">
+          <Alert type="error" className="mb-4" onClose={() => setFormError(null)}>
             {formError}
           </Alert>
         )}
 
         {successMessage && (
-          <Alert type="success" className="mb-4">
+          <Alert type="success" className="mb-4" onClose={() => setSuccessMessage(null)}>
             {successMessage}
           </Alert>
         )}
@@ -444,139 +612,6 @@ export function ReceptionistPanel() {
               </Button>
             </div>
           </form>
-        )}
-      </Card>
-
-      {/* Visits List */}
-      <Card>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-          <div>
-            <h3 className="section-title" style={{ margin: 0 }}>
-              Registered Patient Visits ({filteredVisits.length})
-            </h3>
-            <p className="text-secondary text-sm" style={{ margin: 0 }}>
-              Live directory of patient visits registered today.
-            </p>
-          </div>
-
-          <Button
-            variant="outline"
-            onClick={loadData}
-            loading={loading}
-            icon={<RefreshCw size={16} />}
-          >
-            Refresh
-          </Button>
-        </div>
-
-        {/* Filter Controls */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
-          <div style={{ minWidth: '240px', flex: 1 }}>
-            <Input
-              placeholder="Search visits by patient, doctor, or ID..."
-              value={visitSearch}
-              onChange={(e) => setVisitSearch(e.target.value)}
-              leftIcon={<Search size={16} />}
-            />
-          </div>
-
-          <div style={{ minWidth: '180px' }}>
-            <select
-              className="form-input"
-              value={visitStatusFilter}
-              onChange={(e) => setVisitStatusFilter(e.target.value)}
-            >
-              <option value="ALL">All Visit Statuses</option>
-              <option value="REGISTERED">REGISTERED</option>
-              <option value="VITALS">VITALS</option>
-              <option value="WAITING_OPD">WAITING_OPD</option>
-              <option value="IN_CONSULTATION">IN_CONSULTATION</option>
-              <option value="DIAGNOSTICS">DIAGNOSTICS</option>
-              <option value="PHARMACY">PHARMACY</option>
-              <option value="BILLING">BILLING</option>
-              <option value="COMPLETED">COMPLETED</option>
-              <option value="CANCELLED">CANCELLED</option>
-            </select>
-          </div>
-        </div>
-
-        {loading ? (
-          <Spinner label="Loading visits..." />
-        ) : filteredVisits.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--text-secondary, #64748b)' }}>
-            <Clock size={36} style={{ margin: '0 auto 0.75rem', opacity: 0.5 }} />
-            <p style={{ margin: 0, fontWeight: 500 }}>No visits found matching criteria.</p>
-            <p className="text-xs" style={{ margin: '0.25rem 0 0' }}>
-              Register a walk-in patient above to get started.
-            </p>
-          </div>
-        ) : (
-          <div className="table-responsive">
-            <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-color, #e2e8f0)' }}>
-                  <th style={{ padding: '0.75rem' }}>Visit ID</th>
-                  <th style={{ padding: '0.75rem' }}>Patient Name</th>
-                  <th style={{ padding: '0.75rem' }}>Visit Type</th>
-                  <th style={{ padding: '0.75rem' }}>Assigned Doctor</th>
-                  <th style={{ padding: '0.75rem' }}>Status</th>
-                  <th style={{ padding: '0.75rem' }}>Registered At</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredVisits.map((v) => (
-                  <tr
-                    key={v.id}
-                    style={{ borderBottom: '1px solid var(--border-color, #f1f5f9)' }}
-                  >
-                    <td style={{ padding: '0.75rem' }}>
-                      <code style={{ fontSize: '0.85rem', fontWeight: 600 }}>
-                        {v.id.slice(0, 8)}
-                      </code>
-                    </td>
-                    <td style={{ padding: '0.75rem' }}>
-                      <strong>{v.patient_name || 'Patient'}</strong>
-                    </td>
-                    <td style={{ padding: '0.75rem' }}>
-                      <Badge variant="neutral" size="sm">
-                        {v.visit_type}
-                      </Badge>
-                    </td>
-                    <td style={{ padding: '0.75rem' }}>
-                      {v.doctor_name ? `Dr. ${v.doctor_name}` : 'Unassigned'}
-                    </td>
-                    <td style={{ padding: '0.75rem' }}>
-                      <Badge variant={getStatusBadgeVariant(v.status)} size="sm">
-                        {v.status}
-                      </Badge>
-                    </td>
-                    <td style={{ padding: '0.75rem', fontSize: '0.85rem', color: 'var(--text-secondary, #64748b)' }}>
-                      {new Date(v.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </td>
-                    <td style={{ padding: '0.75rem', textAlign: 'right' }}>
-                      {v.status === 'REGISTERED' && (
-                        <Button
-                          variant="outline"
-                          onClick={() => handleSendToVitals(v.id)}
-                          loading={transitioningId === v.id}
-                          icon={<ArrowRight size={14} />}
-                        >
-                          Send to Vitals
-                        </Button>
-                      )}
-                      {v.status === 'VITALS' && (
-                        <span className="text-secondary text-xs">Awaiting Vitals</span>
-                      )}
-                      {v.status !== 'REGISTERED' && v.status !== 'VITALS' && (
-                        <span className="text-secondary text-xs">In Care Stream</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         )}
       </Card>
     </div>

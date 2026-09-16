@@ -5,7 +5,6 @@ import {
   CheckCircle2,
   RefreshCw,
   Search,
-  Clock,
 } from 'lucide-react';
 import { Card } from '../../components/common/Card';
 import { Badge } from '../../components/common/Badge';
@@ -14,6 +13,7 @@ import { Input } from '../../components/common/Input';
 import { Modal } from '../../components/common/Modal';
 import { Alert } from '../../components/common/Alert';
 import { Spinner } from '../../components/common/Spinner';
+import { EmptyState } from '../../components/common/EmptyState';
 import { staffService } from '../../services/staff.service';
 import type { PrescriptionItem } from '../../types/staff.types';
 
@@ -128,6 +128,7 @@ export function PharmacistPanel() {
   });
 
   const pendingCount = prescriptions.filter((p) => p.status === 'PENDING').length;
+  const dispensedCount = prescriptions.filter((p) => p.status === 'DISPENSED').length;
 
   return (
     <div className="pharmacist-panel">
@@ -138,136 +139,156 @@ export function PharmacistPanel() {
       )}
 
       {successMessage && (
-        <Alert type="success" className="mb-4">
+        <Alert type="success" className="mb-4" onClose={() => setSuccessMessage(null)}>
           {successMessage}
         </Alert>
       )}
 
-      {/* Metrics Row */}
-      <div className="metrics-summary-row mb-6" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+      {/* Workspace Header */}
+      <div className="station-header">
+        <div className="station-header-info">
+          <h3>
+            <Pill size={20} aria-hidden="true" />
+            Pharmacy Dispensing Counter
+          </h3>
+          <p>Prescription verification, clinical medication dispensing, and pharmaceutical fulfillment</p>
+        </div>
+
+        <div className="station-header-actions">
+          <Button
+            variant="outline"
+            onClick={loadPrescriptions}
+            loading={loading}
+            icon={<RefreshCw size={16} />}
+          >
+            Refresh Queue
+          </Button>
+        </div>
+      </div>
+
+      {/* KPI Workload Summary (Section 12) */}
+      <div className="metrics-summary-row mb-6">
         <Card className="summary-stat-card">
           <span className="stat-label">Pending Dispense</span>
-          <strong className="stat-value">{statusFilter === 'PENDING' ? filteredPrescriptions.length : pendingCount}</strong>
-          <span className="stat-hint">Active medication orders</span>
+          <strong className="stat-value">{pendingCount}</strong>
+          <span className="stat-hint">Active prescriptions requiring fulfillment</span>
         </Card>
 
         <Card className="summary-stat-card">
-          <span className="stat-label">Pharmacy Station</span>
-          <strong className="stat-value text-base">Dispensing Unit A</strong>
-          <span className="stat-hint">Connected to OPD Care Stream</span>
+          <span className="stat-label">Dispensed Today</span>
+          <strong className="stat-value">{dispensedCount}</strong>
+          <span className="stat-hint">Completed medication handouts</span>
+        </Card>
+
+        <Card className="summary-stat-card">
+          <span className="stat-label">Total Prescription Orders</span>
+          <strong className="stat-value">{prescriptions.length}</strong>
+          <span className="stat-hint">Full prescription register</span>
         </Card>
       </div>
 
       {/* Main Prescriptions Table */}
       <Card>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-          <div>
-            <h3 className="section-title" style={{ margin: 0 }}>
-              Pharmacy Prescription Orders
+        <div className="station-header" style={{ marginBottom: '14px' }}>
+          <div className="station-header-info">
+            <h3 style={{ fontSize: '18px' }}>
+              Prescription Orders ({filteredPrescriptions.length})
             </h3>
-            <p className="text-secondary text-sm" style={{ margin: 0 }}>
-              Fulfill prescribed medications issued by attending physicians.
-            </p>
-          </div>
-
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <Button
-              variant={statusFilter === 'PENDING' ? 'primary' : 'outline'}
-              onClick={() => setStatusFilter('PENDING')}
-            >
-              Pending Orders
-            </Button>
-            <Button
-              variant={statusFilter === 'DISPENSED' ? 'primary' : 'outline'}
-              onClick={() => setStatusFilter('DISPENSED')}
-            >
-              Dispensed History
-            </Button>
-            <Button
-              variant={statusFilter === 'ALL' ? 'primary' : 'outline'}
-              onClick={() => setStatusFilter('ALL')}
-            >
-              All Prescriptions
-            </Button>
-            <Button
-              variant="outline"
-              onClick={loadPrescriptions}
-              loading={loading}
-              icon={<RefreshCw size={16} />}
-            >
-              Refresh
-            </Button>
+            <p>Fulfill doctor-issued prescriptions for attending patients</p>
           </div>
         </div>
 
-        {/* Search */}
-        <div style={{ marginBottom: '1rem', maxWidth: '380px' }}>
-          <Input
-            placeholder="Search by medication, patient, or doctor..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            leftIcon={<Search size={16} />}
-          />
+        {/* Filter Bar */}
+        <div className="station-filter-bar">
+          <div className="station-search-box">
+            <Input
+              placeholder="Search by medication, patient, or doctor..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              leftIcon={<Search size={16} />}
+            />
+          </div>
+
+          <div className="filter-tabs" role="tablist" aria-label="Pharmacy status filter">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={statusFilter === 'PENDING'}
+              className={`filter-tab-btn ${statusFilter === 'PENDING' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('PENDING')}
+            >
+              Pending Orders ({pendingCount})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={statusFilter === 'DISPENSED'}
+              className={`filter-tab-btn ${statusFilter === 'DISPENSED' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('DISPENSED')}
+            >
+              Dispensed History ({dispensedCount})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={statusFilter === 'ALL'}
+              className={`filter-tab-btn ${statusFilter === 'ALL' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('ALL')}
+            >
+              All Prescriptions ({prescriptions.length})
+            </button>
+          </div>
         </div>
 
         {loading ? (
           <Spinner label="Loading prescriptions..." />
         ) : filteredPrescriptions.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--text-secondary, #64748b)' }}>
-            <Clock size={36} style={{ margin: '0 auto 0.75rem', opacity: 0.5 }} />
-            <p style={{ margin: 0, fontWeight: 500 }}>
-              No prescriptions found in {statusFilter.toLowerCase()} status.
-            </p>
-            <p className="text-xs" style={{ margin: '0.25rem 0 0' }}>
-              Doctor-issued prescriptions will appear here automatically.
-            </p>
-          </div>
+          <EmptyState
+            icon={Pill}
+            title="No prescriptions found"
+            description="No prescriptions match the selected status filter. Doctor prescriptions will appear here automatically."
+          />
         ) : (
           <div className="table-responsive">
-            <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <table className="data-table">
               <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-color, #e2e8f0)' }}>
-                  <th style={{ padding: '0.75rem' }}>Medication</th>
-                  <th style={{ padding: '0.75rem' }}>Dosage & Regime</th>
-                  <th style={{ padding: '0.75rem' }}>Patient Name</th>
-                  <th style={{ padding: '0.75rem' }}>Prescribing Doctor</th>
-                  <th style={{ padding: '0.75rem' }}>Status</th>
-                  <th style={{ padding: '0.75rem' }}>Prescribed At</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right' }}>Actions</th>
+                <tr>
+                  <th>Medication</th>
+                  <th>Dosage & Regime</th>
+                  <th>Patient Name</th>
+                  <th>Prescribing Doctor</th>
+                  <th>Status</th>
+                  <th>Prescribed At</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredPrescriptions.map((p) => (
-                  <tr
-                    key={p.id}
-                    style={{ borderBottom: '1px solid var(--border-color, #f1f5f9)' }}
-                  >
-                    <td style={{ padding: '0.75rem' }}>
+                  <tr key={p.id}>
+                    <td>
                       <strong style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                        <Pill size={15} color="var(--primary-color, #0284c7)" />
+                        <Pill size={15} color="#165b53" aria-hidden="true" />
                         {p.medication}
                       </strong>
                       {p.instructions && (
-                        <span className="text-secondary text-xs" style={{ display: 'block', marginTop: '2px' }}>
+                        <span className="cell-meta" style={{ display: 'block', marginTop: '2px' }}>
                           Note: {p.instructions}
                         </span>
                       )}
                     </td>
-                    <td style={{ padding: '0.75rem' }}>
+                    <td>
                       <span>{p.dosage}</span>
                       {(p.frequency || p.duration) && (
-                        <span className="text-secondary text-xs" style={{ display: 'block' }}>
+                        <span className="cell-meta" style={{ display: 'block' }}>
                           {[p.frequency, p.duration].filter(Boolean).join(' • ')}
                         </span>
                       )}
                     </td>
-                    <td style={{ padding: '0.75rem' }}>
-                      <strong>{p.patient_name || 'Patient'}</strong>
-                    </td>
-                    <td style={{ padding: '0.75rem' }}>
+                    <td className="cell-name">{p.patient_name || 'Patient'}</td>
+                    <td className="cell-meta">
                       {p.doctor_name ? `Dr. ${p.doctor_name}` : 'Attending Doctor'}
                     </td>
-                    <td style={{ padding: '0.75rem' }}>
+                    <td>
                       <Badge
                         variant={p.status === 'PENDING' ? 'warning' : p.status === 'DISPENSED' ? 'success' : 'neutral'}
                         size="sm"
@@ -275,7 +296,7 @@ export function PharmacistPanel() {
                         {p.status}
                       </Badge>
                     </td>
-                    <td style={{ padding: '0.75rem', fontSize: '0.85rem', color: 'var(--text-secondary, #64748b)' }}>
+                    <td className="cell-meta">
                       {new Date(p.created_at).toLocaleString([], {
                         month: 'short',
                         day: 'numeric',
@@ -283,10 +304,11 @@ export function PharmacistPanel() {
                         minute: '2-digit',
                       })}
                     </td>
-                    <td style={{ padding: '0.75rem', textAlign: 'right' }}>
+                    <td className="cell-actions">
                       {p.status === 'PENDING' ? (
                         <Button
                           variant="primary"
+                          size="sm"
                           onClick={() => openDispenseModal(p)}
                           icon={<CheckCircle2 size={15} />}
                         >
