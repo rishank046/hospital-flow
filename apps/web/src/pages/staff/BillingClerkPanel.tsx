@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import {
+  Receipt,
   RefreshCw,
   Search,
-  Clock,
 } from 'lucide-react';
 import { Card } from '../../components/common/Card';
 import { Badge } from '../../components/common/Badge';
@@ -10,6 +10,7 @@ import { Button } from '../../components/common/Button';
 import { Input } from '../../components/common/Input';
 import { Alert } from '../../components/common/Alert';
 import { Spinner } from '../../components/common/Spinner';
+import { EmptyState } from '../../components/common/EmptyState';
 import { request } from '../../services/api.client';
 
 interface InvoiceItem {
@@ -27,7 +28,7 @@ export function BillingClerkPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'PENDING' | 'ALL'>('PENDING');
+  const [statusFilter, setStatusFilter] = useState<'PENDING' | 'PAID' | 'ALL'>('PENDING');
 
   const loadInvoices = async () => {
     setLoading(true);
@@ -72,7 +73,7 @@ export function BillingClerkPanel() {
   }, []);
 
   const filteredInvoices = invoices.filter((inv) => {
-    if (statusFilter === 'PENDING' && inv.status !== 'PENDING') {
+    if (statusFilter !== 'ALL' && inv.status !== statusFilter) {
       return false;
     }
     if (searchQuery.trim()) {
@@ -85,6 +86,7 @@ export function BillingClerkPanel() {
   });
 
   const pendingCount = invoices.filter((i) => i.status === 'PENDING').length;
+  const paidCount = invoices.filter((i) => i.status === 'PAID').length;
   const pendingAmount = invoices
     .filter((i) => i.status === 'PENDING')
     .reduce((acc, i) => acc + (Number(i.amount) || 0), 0);
@@ -97,108 +99,150 @@ export function BillingClerkPanel() {
         </Alert>
       )}
 
-      {/* Metrics */}
-      <div className="metrics-summary-row mb-6" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+      {/* Workspace Header */}
+      <div className="station-header">
+        <div className="station-header-info">
+          <h3>
+            <Receipt size={20} aria-hidden="true" />
+            Hospital Billing & Cash Counter
+          </h3>
+          <p>Process invoice settlements, collect cashier payments, and audit patient billing accounts</p>
+        </div>
+
+        <div className="station-header-actions">
+          <Button
+            variant="outline"
+            onClick={loadInvoices}
+            loading={loading}
+            icon={<RefreshCw size={16} />}
+          >
+            Refresh Ledger
+          </Button>
+        </div>
+      </div>
+
+      {/* KPI Summary Cards (Section 12) */}
+      <div className="metrics-summary-row mb-6">
         <Card className="summary-stat-card">
           <span className="stat-label">Pending Invoices</span>
           <strong className="stat-value">{pendingCount}</strong>
-          <span className="stat-hint">Invoices awaiting settlement</span>
+          <span className="stat-hint">Awaiting cashier payment settlement</span>
         </Card>
 
         <Card className="summary-stat-card">
-          <span className="stat-label">Pending Total Amount</span>
+          <span className="stat-label">Settled Invoices</span>
+          <strong className="stat-value">{paidCount}</strong>
+          <span className="stat-hint">Successfully paid balances</span>
+        </Card>
+
+        <Card className="summary-stat-card">
+          <span className="stat-label">Outstanding Balance</span>
           <strong className="stat-value text-base">${pendingAmount.toFixed(2)}</strong>
-          <span className="stat-hint">Uncollected patient balances</span>
+          <span className="stat-hint">Total uncollected patient receivables</span>
+        </Card>
+
+        <Card className="summary-stat-card">
+          <span className="stat-label">Total Invoices</span>
+          <strong className="stat-value">{invoices.length}</strong>
+          <span className="stat-hint">Full billing ledger records</span>
         </Card>
       </div>
 
       {/* Main Table Card */}
       <Card>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-          <div>
-            <h3 className="section-title" style={{ margin: 0 }}>
-              Hospital Billing & Invoices
+        <div className="station-header" style={{ marginBottom: '14px' }}>
+          <div className="station-header-info">
+            <h3 style={{ fontSize: '18px' }}>
+              Billing Register & Invoices ({filteredInvoices.length})
             </h3>
-            <p className="text-secondary text-sm" style={{ margin: 0 }}>
-              Process invoice settlements and review patient billing accounts.
-            </p>
+            <p>Review invoice items and payment statuses</p>
+          </div>
+        </div>
+
+        {/* Filter Bar */}
+        <div className="station-filter-bar">
+          <div className="station-search-box">
+            <Input
+              placeholder="Search invoice ID or patient name..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              leftIcon={<Search size={16} />}
+            />
           </div>
 
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <Button
-              variant={statusFilter === 'PENDING' ? 'primary' : 'outline'}
+          <div className="filter-tabs" role="tablist" aria-label="Invoice filter tabs">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={statusFilter === 'PENDING'}
+              className={`filter-tab-btn ${statusFilter === 'PENDING' ? 'active' : ''}`}
               onClick={() => setStatusFilter('PENDING')}
             >
               Pending ({pendingCount})
-            </Button>
-            <Button
-              variant={statusFilter === 'ALL' ? 'primary' : 'outline'}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={statusFilter === 'PAID'}
+              className={`filter-tab-btn ${statusFilter === 'PAID' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('PAID')}
+            >
+              Paid ({paidCount})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={statusFilter === 'ALL'}
+              className={`filter-tab-btn ${statusFilter === 'ALL' ? 'active' : ''}`}
               onClick={() => setStatusFilter('ALL')}
             >
               All Invoices ({invoices.length})
-            </Button>
-            <Button
-              variant="outline"
-              onClick={loadInvoices}
-              loading={loading}
-              icon={<RefreshCw size={16} />}
-            >
-              Refresh
-            </Button>
+            </button>
           </div>
-        </div>
-
-        <div style={{ marginBottom: '1rem', maxWidth: '380px' }}>
-          <Input
-            placeholder="Search invoice or patient..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            leftIcon={<Search size={16} />}
-          />
         </div>
 
         {loading ? (
-          <Spinner label="Loading billing data..." />
+          <Spinner label="Loading billing records..." />
         ) : filteredInvoices.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--text-secondary, #64748b)' }}>
-            <Clock size={36} style={{ margin: '0 auto 0.75rem', opacity: 0.5 }} />
-            <p style={{ margin: 0, fontWeight: 500 }}>No invoices found.</p>
-          </div>
+          <EmptyState
+            icon={Receipt}
+            title="No invoices found"
+            description="No invoices match the selected filter. Invoices generated for consultations, tests, and medications will appear here."
+          />
         ) : (
           <div className="table-responsive">
-            <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <table className="data-table">
               <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-color, #e2e8f0)' }}>
-                  <th style={{ padding: '0.75rem' }}>Invoice ID</th>
-                  <th style={{ padding: '0.75rem' }}>Amount</th>
-                  <th style={{ padding: '0.75rem' }}>Status</th>
-                  <th style={{ padding: '0.75rem' }}>Created At</th>
+                <tr>
+                  <th>Invoice ID</th>
+                  <th>Patient Name</th>
+                  <th>Amount</th>
+                  <th>Status</th>
+                  <th>Created Date</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredInvoices.map((inv) => (
-                  <tr
-                    key={inv.id}
-                    style={{ borderBottom: '1px solid var(--border-color, #f1f5f9)' }}
-                  >
-                    <td style={{ padding: '0.75rem' }}>
-                      <code style={{ fontSize: '0.85rem', fontWeight: 600 }}>
-                        {inv.id.slice(0, 8)}
-                      </code>
-                    </td>
-                    <td style={{ padding: '0.75rem', fontWeight: 600 }}>
+                  <tr key={inv.id}>
+                    <td className="cell-id">{inv.id.slice(0, 8)}</td>
+                    <td className="cell-name">{inv.patient_name || 'Patient'}</td>
+                    <td style={{ fontWeight: 700, color: 'var(--ink)' }}>
                       ${Number(inv.amount || 0).toFixed(2)}
                     </td>
-                    <td style={{ padding: '0.75rem' }}>
+                    <td>
                       <Badge
-                        variant={inv.status === 'PENDING' ? 'warning' : 'success'}
+                        variant={inv.status === 'PENDING' ? 'warning' : inv.status === 'PAID' ? 'success' : 'neutral'}
                         size="sm"
                       >
                         {inv.status}
                       </Badge>
                     </td>
-                    <td style={{ padding: '0.75rem', fontSize: '0.85rem', color: 'var(--text-secondary, #64748b)' }}>
-                      {new Date(inv.created_at).toLocaleDateString()}
+                    <td className="cell-meta">
+                      {new Date(inv.created_at).toLocaleDateString([], {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                      })}
                     </td>
                   </tr>
                 ))}
@@ -210,3 +254,4 @@ export function BillingClerkPanel() {
     </div>
   );
 }
+

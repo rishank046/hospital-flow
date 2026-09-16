@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { DashboardLayout } from '../../components/layout/DashboardLayout';
 import { Card } from '../../components/common/Card';
 import { Button } from '../../components/common/Button';
+import { Badge } from '../../components/common/Badge';
 import { Spinner } from '../../components/common/Spinner';
 import { Alert } from '../../components/common/Alert';
 import { doctorService } from '../../services/doctor.service';
@@ -100,6 +101,14 @@ export function DoctorDashboard() {
             </Card>
 
             <Card className="summary-stat-card">
+              <span className="stat-label">Completed Consults</span>
+              <strong className="stat-value">
+                {schedule.filter((s) => s.status === 'COMPLETED').length}
+              </strong>
+              <span className="stat-hint">Concluded consultations today</span>
+            </Card>
+
+            <Card className="summary-stat-card">
               <span className="stat-label">Assigned Patients</span>
               <strong className="stat-value">{patients.length}</strong>
               <span className="stat-hint">Active patient roster</span>
@@ -107,10 +116,12 @@ export function DoctorDashboard() {
 
             <Card className="summary-stat-card">
               <span className="stat-label">Department</span>
-              <strong className="stat-value text-base">
-                {profile?.department || 'General'}
-              </strong>
-              <span className="stat-hint">{profile?.specialization}</span>
+              <div className="stat-badge-value">
+                <Badge variant="primary" size="md">
+                  {profile?.department || 'General Practice'}
+                </Badge>
+              </div>
+              <span className="stat-hint">{profile?.specialization || 'Attending Physician'}</span>
             </Card>
           </div>
 

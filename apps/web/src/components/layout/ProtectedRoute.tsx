@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
 import { useAuth } from '../../hooks/useAuth';
+import { LoadingScreen } from '../common/LoadingScreen';
 import type { StaffRole, UserRole } from '../../types/auth.types';
 
 interface ProtectedRouteProps {
@@ -30,7 +31,12 @@ export function ProtectedRoute({ children, allowedRoles, allowedStaffRoles }: Pr
   }, [loading, isAuthenticated]);
 
   if (loading || !isAuthenticated) {
-    return <div className="loading-screen">Loading session...</div>;
+    return (
+      <LoadingScreen
+        message="Verifying session..."
+        supportingText="Confirming secure authentication & workspace access"
+      />
+    );
   }
 
   const isDoctor = (role === 'STAFF' && staffRole === 'DOCTOR') || role === 'DOCTOR';

@@ -6,7 +6,6 @@ import {
   RefreshCw,
   Search,
   CheckCircle2,
-  Clock,
 } from 'lucide-react';
 import { Card } from '../../components/common/Card';
 import { Badge } from '../../components/common/Badge';
@@ -15,6 +14,7 @@ import { Input } from '../../components/common/Input';
 import { Modal } from '../../components/common/Modal';
 import { Alert } from '../../components/common/Alert';
 import { Spinner } from '../../components/common/Spinner';
+import { EmptyState } from '../../components/common/EmptyState';
 import { staffService } from '../../services/staff.service';
 import type { VisitItem, VisitStatus } from '../../types/staff.types';
 
@@ -179,6 +179,8 @@ export function NursePanel() {
   const awaitingCount = visits.filter(
     (v) => v.status === 'VITALS' || v.status === 'REGISTERED'
   ).length;
+  const triagedCount = visits.filter((v) => v.status === 'WAITING_OPD').length;
+  const inConsultCount = visits.filter((v) => v.status === 'IN_CONSULTATION').length;
 
   return (
     <div className="nurse-panel">
@@ -189,133 +191,157 @@ export function NursePanel() {
       )}
 
       {successMessage && (
-        <Alert type="success" className="mb-4">
+        <Alert type="success" className="mb-4" onClose={() => setSuccessMessage(null)}>
           {successMessage}
         </Alert>
       )}
 
-      {/* Summary Row */}
-      <div className="metrics-summary-row mb-6" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+      {/* Workspace Header */}
+      <div className="station-header">
+        <div className="station-header-info">
+          <h3>
+            <Heart size={20} aria-hidden="true" />
+            Nursing & Triage Station
+          </h3>
+          <p>Record vital signs, assess clinical triage priority, and prepare patients for consultation</p>
+        </div>
+
+        <div className="station-header-actions">
+          <Button
+            variant="outline"
+            onClick={loadVisits}
+            loading={loading}
+            icon={<RefreshCw size={16} />}
+          >
+            Refresh Queue
+          </Button>
+        </div>
+      </div>
+
+      {/* KPI Workload Summary (Section 12) */}
+      <div className="metrics-summary-row mb-6">
         <Card className="summary-stat-card">
-          <span className="stat-label">Awaiting Triage / Vitals</span>
+          <span className="stat-label">Awaiting Vitals</span>
           <strong className="stat-value">{awaitingCount}</strong>
-          <span className="stat-hint">Active visits in queue</span>
+          <span className="stat-hint">Active patients queued for triage</span>
         </Card>
 
         <Card className="summary-stat-card">
-          <span className="stat-label">Total Visits Today</span>
+          <span className="stat-label">Triaged & Ready</span>
+          <strong className="stat-value">{triagedCount}</strong>
+          <span className="stat-hint">Vitals recorded • Ready for OPD</span>
+        </Card>
+
+        <Card className="summary-stat-card">
+          <span className="stat-label">In Consultation</span>
+          <strong className="stat-value">{inConsultCount}</strong>
+          <span className="stat-hint">Attending specialist room</span>
+        </Card>
+
+        <Card className="summary-stat-card">
+          <span className="stat-label">Active Workload</span>
           <strong className="stat-value">{visits.length}</strong>
-          <span className="stat-hint">Registered facility stream</span>
+          <span className="stat-hint">Total registered patient encounters</span>
         </Card>
       </div>
 
       {/* Main Patient Triage Card */}
       <Card>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-          <div>
-            <h3 className="section-title" style={{ margin: 0 }}>
-              Nurse Triage & Vitals Recording Queue
+        <div className="station-header" style={{ marginBottom: '14px' }}>
+          <div className="station-header-info">
+            <h3 style={{ fontSize: '18px' }}>
+              Triage & Vitals Queue ({filteredVisits.length})
             </h3>
-            <p className="text-secondary text-sm" style={{ margin: 0 }}>
-              Select a patient visit below to assess and record vital signs before consultation.
-            </p>
-          </div>
-
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <Button
-              variant={statusFilter === 'AWAITING_VITALS' ? 'primary' : 'outline'}
-              onClick={() => setStatusFilter('AWAITING_VITALS')}
-            >
-              Awaiting Vitals ({awaitingCount})
-            </Button>
-            <Button
-              variant={statusFilter === 'ALL' ? 'primary' : 'outline'}
-              onClick={() => setStatusFilter('ALL')}
-            >
-              All Visits ({visits.length})
-            </Button>
-            <Button
-              variant="outline"
-              onClick={loadVisits}
-              loading={loading}
-              icon={<RefreshCw size={16} />}
-            >
-              Refresh
-            </Button>
+            <p>Select a patient visit below to assess and record vital signs</p>
           </div>
         </div>
 
-        {/* Search Input */}
-        <div style={{ marginBottom: '1rem', maxWidth: '380px' }}>
-          <Input
-            placeholder="Search patient by name or ID..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            leftIcon={<Search size={16} />}
-          />
+        {/* Filter Controls */}
+        <div className="station-filter-bar">
+          <div className="station-search-box">
+            <Input
+              placeholder="Search patient by name or ID..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              leftIcon={<Search size={16} />}
+            />
+          </div>
+
+          <div className="filter-tabs" role="tablist" aria-label="Triage status filter">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={statusFilter === 'AWAITING_VITALS'}
+              className={`filter-tab-btn ${statusFilter === 'AWAITING_VITALS' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('AWAITING_VITALS')}
+            >
+              Awaiting Vitals ({awaitingCount})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={statusFilter === 'ALL'}
+              className={`filter-tab-btn ${statusFilter === 'ALL' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('ALL')}
+            >
+              All Visits ({visits.length})
+            </button>
+          </div>
         </div>
 
         {loading ? (
           <Spinner label="Loading triage queue..." />
         ) : filteredVisits.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--text-secondary, #64748b)' }}>
-            <Clock size={36} style={{ margin: '0 auto 0.75rem', opacity: 0.5 }} />
-            <p style={{ margin: 0, fontWeight: 500 }}>No patient visits awaiting vitals.</p>
-            <p className="text-xs" style={{ margin: '0.25rem 0 0' }}>
-              When a patient registers at reception, they will appear here.
-            </p>
-          </div>
+          <EmptyState
+            icon={Heart}
+            title="No patients awaiting triage"
+            description="All registered patients have had their vitals recorded, or no visits match your search criteria."
+          />
         ) : (
           <div className="table-responsive">
-            <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <table className="data-table">
               <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-color, #e2e8f0)' }}>
-                  <th style={{ padding: '0.75rem' }}>Visit ID</th>
-                  <th style={{ padding: '0.75rem' }}>Patient Name</th>
-                  <th style={{ padding: '0.75rem' }}>Visit Type</th>
-                  <th style={{ padding: '0.75rem' }}>Assigned Doctor</th>
-                  <th style={{ padding: '0.75rem' }}>Status</th>
-                  <th style={{ padding: '0.75rem' }}>Time In</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right' }}>Actions</th>
+                <tr>
+                  <th>Visit ID</th>
+                  <th>Patient Name</th>
+                  <th>Visit Type</th>
+                  <th>Assigned Doctor</th>
+                  <th>Status</th>
+                  <th>Time In</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredVisits.map((v) => (
-                  <tr
-                    key={v.id}
-                    style={{ borderBottom: '1px solid var(--border-color, #f1f5f9)' }}
-                  >
-                    <td style={{ padding: '0.75rem' }}>
-                      <code style={{ fontSize: '0.85rem', fontWeight: 600 }}>
-                        {v.id.slice(0, 8)}
-                      </code>
-                    </td>
-                    <td style={{ padding: '0.75rem' }}>
-                      <strong>{v.patient_name || 'Patient'}</strong>
-                    </td>
-                    <td style={{ padding: '0.75rem' }}>
+                  <tr key={v.id}>
+                    <td className="cell-id">{v.id.slice(0, 8)}</td>
+                    <td className="cell-name">{v.patient_name || 'Patient'}</td>
+                    <td>
                       <Badge variant="neutral" size="sm">
                         {v.visit_type}
                       </Badge>
                     </td>
-                    <td style={{ padding: '0.75rem' }}>
+                    <td className="cell-meta">
                       {v.doctor_name ? `Dr. ${v.doctor_name}` : 'Unassigned'}
                     </td>
-                    <td style={{ padding: '0.75rem' }}>
+                    <td>
                       <Badge variant={getStatusBadgeVariant(v.status)} size="sm">
                         {v.status}
                       </Badge>
                     </td>
-                    <td style={{ padding: '0.75rem', fontSize: '0.85rem', color: 'var(--text-secondary, #64748b)' }}>
+                    <td className="cell-meta">
                       {new Date(v.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </td>
-                    <td style={{ padding: '0.75rem', textAlign: 'right' }}>
+                    <td className="cell-actions">
                       <Button
                         variant={v.status === 'VITALS' || v.status === 'REGISTERED' ? 'primary' : 'outline'}
+                        size="sm"
                         onClick={() => openVitalsModal(v)}
-                        icon={<Activity size={15} />}
+                        icon={<Activity size={14} />}
                       >
-                        {v.status === 'VITALS' || v.status === 'REGISTERED' ? 'Record Vitals' : 'Update Vitals'}
+                        {v.status === 'VITALS' || v.status === 'REGISTERED'
+                          ? 'Record Vitals'
+                          : 'Update Vitals'}
                       </Button>
                     </td>
                   </tr>

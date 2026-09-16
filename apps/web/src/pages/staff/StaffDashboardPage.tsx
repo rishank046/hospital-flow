@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { DashboardLayout } from '../../components/layout/DashboardLayout';
-import { Card } from '../../components/common/Card';
 import { Badge } from '../../components/common/Badge';
+import { Button } from '../../components/common/Button';
 import { Spinner } from '../../components/common/Spinner';
 import { Alert } from '../../components/common/Alert';
+import { LoadingScreen } from '../../components/common/LoadingScreen';
+import { getStaffRolePresentation } from '../../utils/roleConfig';
 import { staffService } from '../../services/staff.service';
 import type { StaffProfile } from '../../types/staff.types';
 import type { StaffRole } from '../../types/auth.types';
@@ -19,18 +22,18 @@ interface StaffDashboardPageProps {
 }
 
 export function StaffDashboardPage({ roleOverride }: StaffDashboardPageProps = {}) {
-  const { user, staffRole } = useAuth();
+  const { user, staffRole: authStaffRole } = useAuth();
   const [profile, setProfile] = useState<StaffProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Safeguard: DOCTOR staffRole must never be routed to the general staff portal
   useEffect(() => {
-    if ((staffRole === 'DOCTOR' || user?.staffRole === 'DOCTOR') && !roleOverride) {
+    if ((authStaffRole === 'DOCTOR' || user?.staffRole === 'DOCTOR') && !roleOverride) {
       window.history.replaceState({}, '', '/staff/doctor/dashboard');
       window.dispatchEvent(new PopStateEvent('popstate'));
     }
-  }, [staffRole, user?.staffRole, roleOverride]);
+  }, [authStaffRole, user?.staffRole, roleOverride]);
 
   const loadProfile = async () => {
     setLoading(true);
@@ -67,14 +70,65 @@ export function StaffDashboardPage({ roleOverride }: StaffDashboardPageProps = {
     };
   }, []);
 
-  const effectiveStaffRole = (roleOverride || profile?.staff_role || user?.staffRole || 'OPD_MANAGER').toUpperCase();
+  const rawStaffRole = roleOverride || profile?.staff_role || authStaffRole || user?.staffRole;
+  const isRoleResolved = Boolean(rawStaffRole);
+
+  // Neutral loading state while role is unresolved
+  if (loading && !isRoleResolved) {
+    return (
+      <LoadingScreen
+        message="Loading staff workstation..."
+        supportingText="Resolving operational role assignment & department credentials"
+      />
+    );
+  }
+
+  const rolePresentation = getStaffRolePresentation(rawStaffRole);
   const employeeCode = profile?.employee_code || user?.employeeCode || 'STAFF-ID';
-  const department = profile?.department || user?.department || 'Clinical Operations';
+  const department = profile?.department || user?.department || rolePresentation.departmentLabel;
   const staffName = profile?.name || user?.name || 'Staff Member';
 
+  // Unknown or unsupported role safety state (Section 7)
+  if (!rolePresentation.isSupportedStaffRole || rolePresentation.panelKey === 'UNSUPPORTED') {
+    return (
+      <DashboardLayout
+        pageTitle="Staff Workspace Unavailable"
+        pageSubtitle="Operational Access Control • Department Unassigned"
+      >
+        <div className="unsupported-role-card">
+          <div
+            className="empty-state-icon"
+            style={{ margin: '0 auto 16px', background: '#fee2e2', color: '#dc2626' }}
+            aria-hidden="true"
+          >
+            <AlertTriangle size={32} />
+          </div>
+          <h3>Staff Workspace Unavailable</h3>
+          <p>
+            Resolved role: <strong>{rawStaffRole || 'UNKNOWN'}</strong>
+          </p>
+          <p>
+            This staff role is not configured for an active workstation panel in this hospital facility.
+          </p>
+          <p className="text-muted text-xs" style={{ margin: '12px 0 20px' }}>
+            Please contact the hospital administrator to assign a valid workstation station.
+          </p>
+          <Button
+            variant="primary"
+            onClick={() => {
+              window.history.pushState({}, '', '/login');
+              window.dispatchEvent(new PopStateEvent('popstate'));
+            }}
+          >
+            Return to Login
+          </Button>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   const renderRolePanel = () => {
-    switch (effectiveStaffRole) {
-      case 'OPD_MANAGER':
+    switch (rolePresentation.panelKey) {
       case 'RECEPTIONIST':
         return <ReceptionistPanel />;
       case 'NURSE':
@@ -82,39 +136,18 @@ export function StaffDashboardPage({ roleOverride }: StaffDashboardPageProps = {
       case 'PHARMACIST':
         return <PharmacistPanel />;
       case 'LAB_TECH':
-      case 'LAB_STAFF':
         return <LabTechPanel />;
       case 'BILLING_CLERK':
         return <BillingClerkPanel />;
       default:
-        return <ReceptionistPanel />;
-    }
-  };
-
-  const getRoleBadgeVariant = (role: string) => {
-    switch (role) {
-      case 'OPD_MANAGER':
-        return 'primary';
-      case 'NURSE':
-        return 'primary';
-      case 'PHARMACIST':
-        return 'success';
-      case 'LAB_TECH':
-      case 'LAB_STAFF':
-        return 'warning';
-      case 'RECEPTIONIST':
-        return 'primary';
-      case 'BILLING_CLERK':
-        return 'success';
-      default:
-        return 'neutral';
+        return null;
     }
   };
 
   return (
     <DashboardLayout
-      pageTitle={`Staff Portal: ${staffName}`}
-      pageSubtitle={`Operational Area • Role: ${effectiveStaffRole}`}
+      pageTitle={`${rolePresentation.displayName} Workstation`}
+      pageSubtitle={`${department} • Operator: ${staffName}`}
     >
       {error && (
         <Alert type="error" className="mb-4" onRetry={loadProfile}>
@@ -122,43 +155,46 @@ export function StaffDashboardPage({ roleOverride }: StaffDashboardPageProps = {
         </Alert>
       )}
 
-      {/* Shared Staff Profile & Station Bar */}
-      <div className="metrics-summary-row mb-6" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
-        <Card className="summary-stat-card">
-          <span className="stat-label">Employee Code</span>
-          <strong className="stat-value">{employeeCode}</strong>
-          <span className="stat-hint">Assigned Staff ID</span>
-        </Card>
+      {/* Shared Staff Identity Strip */}
+      <div className="workstation-identity-strip">
+        <div className="identity-item">
+          <span className="identity-label">Operator</span>
+          <span className="identity-value">{staffName}</span>
+        </div>
 
-        <Card className="summary-stat-card">
-          <span className="stat-label">Staff Role</span>
-          <strong className="stat-value text-base">
-            <Badge variant={getRoleBadgeVariant(effectiveStaffRole)} size="md">
-              {effectiveStaffRole}
+        <div className="identity-item">
+          <span className="identity-label">Workstation Role</span>
+          <span className="identity-value">
+            <Badge variant={rolePresentation.badgeVariant} size="sm">
+              {rolePresentation.displayName}
             </Badge>
-          </strong>
-          <span className="stat-hint">Clinical Role Designation</span>
-        </Card>
+          </span>
+        </div>
 
-        <Card className="summary-stat-card">
-          <span className="stat-label">Department</span>
-          <strong className="stat-value text-base">{department}</strong>
-          <span className="stat-hint">Hospital Department Station</span>
-        </Card>
+        <div className="identity-item">
+          <span className="identity-label">Employee ID</span>
+          <span className="identity-value">
+            <code>{employeeCode}</code>
+          </span>
+        </div>
 
-        <Card className="summary-stat-card">
-          <span className="stat-label">Account Status</span>
-          <strong className="stat-value text-base">
+        <div className="identity-item">
+          <span className="identity-label">Station / Bench</span>
+          <span className="identity-value">{rolePresentation.stationLabel}</span>
+        </div>
+
+        <div className="identity-item">
+          <span className="identity-label">Status</span>
+          <span className="identity-value">
             <Badge variant={profile?.staff_status === 'ACTIVE' ? 'success' : 'neutral'} size="sm">
               {profile?.staff_status || 'ACTIVE'}
             </Badge>
-          </strong>
-          <span className="stat-hint">Authorized Credentials</span>
-        </Card>
+          </span>
+        </div>
       </div>
 
       {loading ? (
-        <Spinner label="Loading operational workstation..." />
+        <Spinner label={`Loading ${rolePresentation.displayName.toLowerCase()} workstation...`} />
       ) : (
         renderRolePanel()
       )}
@@ -167,3 +203,4 @@ export function StaffDashboardPage({ roleOverride }: StaffDashboardPageProps = {
 }
 
 export default StaffDashboardPage;
+

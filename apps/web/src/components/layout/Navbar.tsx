@@ -1,6 +1,7 @@
 import { useEffect, useState, type MouseEvent } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { Badge } from '../common/Badge';
+import { getUserRolePresentation } from '../../utils/roleConfig';
 
 export interface NavbarProps {
   isSidebarOpen?: boolean;
@@ -22,6 +23,8 @@ export function Navbar({ isSidebarOpen = false, onToggleSidebar }: NavbarProps =
   const isAdmin = role === 'ADMIN';
   const isStaff = role === 'STAFF' && !isDoctor;
 
+  const rolePresentation = getUserRolePresentation(role, staffRole);
+
   const displayName =
     user?.name ||
     (isDoctor
@@ -29,38 +32,10 @@ export function Navbar({ isSidebarOpen = false, onToggleSidebar }: NavbarProps =
       : isAdmin
       ? 'Admin'
       : isStaff
-      ? 'Staff'
+      ? rolePresentation.shortRole
       : 'User');
 
-  let homeHref = '/user/dashboard';
-  if (isAdmin) {
-    homeHref = '/admin/dashboard';
-  } else if (isDoctor) {
-    homeHref = '/staff/doctor/dashboard';
-  } else if (isStaff) {
-    switch (staffRole) {
-      case 'OPD_MANAGER':
-      case 'RECEPTIONIST':
-        homeHref = '/staff/opd';
-        break;
-      case 'LAB_TECH':
-      case 'LAB_STAFF':
-        homeHref = '/staff/lab';
-        break;
-      case 'PHARMACIST':
-        homeHref = '/staff/pharmacy';
-        break;
-      case 'BILLING_CLERK':
-        homeHref = '/staff/billing';
-        break;
-      case 'NURSE':
-        homeHref = '/staff/nurse';
-        break;
-      default:
-        homeHref = '/staff/opd';
-        break;
-    }
-  }
+  const homeHref = rolePresentation.route || '/user/dashboard';
 
   const navigateToHome = (e: MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
@@ -107,9 +82,15 @@ export function Navbar({ isSidebarOpen = false, onToggleSidebar }: NavbarProps =
 
       <div className="navbar-actions">
         <div className="user-profile-info">
-          <span className="user-greeting">Welcome, <strong>{displayName}</strong></span>
-          <Badge variant={isDoctor ? 'primary' : isAdmin ? 'warning' : isStaff ? 'primary' : 'success'} size="sm">
-            {staffRole || role || 'USER'}
+          <span className="user-greeting">
+            Welcome, <strong>{displayName}</strong>
+          </span>
+          <span className="user-name-compact" title={displayName}>
+            {displayName}
+          </span>
+          <Badge variant={rolePresentation.badgeVariant} size="sm">
+            <span className="badge-text-full">{rolePresentation.displayName}</span>
+            <span className="badge-text-short">{rolePresentation.shortRole}</span>
           </Badge>
         </div>
 

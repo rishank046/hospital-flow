@@ -1,5 +1,13 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Calendar, UserPlus, Users, CheckCircle2 } from 'lucide-react';
+import {
+  Calendar,
+  UserPlus,
+  Users,
+  CheckCircle2,
+  Pill,
+  Microscope,
+  ArrowRight,
+} from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { DashboardLayout } from '../../components/layout/DashboardLayout';
 import { Card } from '../../components/common/Card';
@@ -9,14 +17,23 @@ import { Spinner } from '../../components/common/Spinner';
 import { Alert } from '../../components/common/Alert';
 import { Modal } from '../../components/common/Modal';
 import { Input } from '../../components/common/Input';
+import { EmptyState } from '../../components/common/EmptyState';
 import { patientService } from '../../services/patient.service';
-import type { Appointment, Gender, PatientProfile } from '../../types/patient.types';
+import type {
+  Appointment,
+  Gender,
+  PatientProfile,
+  Prescription,
+  Report,
+} from '../../types/patient.types';
 
 export function PatientDashboard() {
   const { user } = useAuth();
   const [profile, setProfile] = useState<PatientProfile | null>(null);
   const [myPatients, setMyPatients] = useState<PatientProfile[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
+  const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentTimestamp] = useState(() => Date.now());
@@ -35,14 +52,18 @@ export function PatientDashboard() {
     setLoading(true);
     setError(null);
     try {
-      const [profData, aptsData, patientsList] = await Promise.all([
+      const [profData, aptsData, patientsList, rxData, repData] = await Promise.all([
         patientService.getProfile().catch(() => null),
         patientService.getAppointments().catch(() => []),
         patientService.listMyPatients().catch(() => []),
+        patientService.getPrescriptions().catch(() => []),
+        patientService.getReports().catch(() => []),
       ]);
       if (profData) setProfile(profData);
       if (aptsData) setAppointments(aptsData);
       if (patientsList) setMyPatients(patientsList);
+      if (rxData) setPrescriptions(rxData);
+      if (repData) setReports(repData);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : 'Failed to load dashboard data.'
@@ -58,12 +79,16 @@ export function PatientDashboard() {
       patientService.getProfile().catch(() => null),
       patientService.getAppointments().catch(() => []),
       patientService.listMyPatients().catch(() => []),
+      patientService.getPrescriptions().catch(() => []),
+      patientService.getReports().catch(() => []),
     ])
-      .then(([profData, aptsData, patientsList]) => {
+      .then(([profData, aptsData, patientsList, rxData, repData]) => {
         if (!isMounted) return;
         if (profData) setProfile(profData);
         if (aptsData) setAppointments(aptsData);
         if (patientsList) setMyPatients(patientsList);
+        if (rxData) setPrescriptions(rxData);
+        if (repData) setReports(repData);
       })
       .catch((err) => {
         if (isMounted) {
@@ -131,18 +156,23 @@ export function PatientDashboard() {
     window.dispatchEvent(new PopStateEvent('popstate'));
   };
 
+  const patientType = profile?.patientType || profile?.patient_type || 'Online';
+  const scheduledCount = appointments.filter((a) => a.status === 'SCHEDULED').length;
+  const completedCount = appointments.filter((a) => a.status === 'COMPLETED').length;
+  const clinicalRecordsCount = prescriptions.length + reports.length;
+
   return (
     <DashboardLayout
       pageTitle={`Welcome, ${profile?.name || user?.name || 'Patient'}`}
       pageSubtitle="Track your upcoming consultations, test results, and clinical milestones."
       headerAction={
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <Button
             variant="outline"
             onClick={() => setIsAddModalOpen(true)}
+            icon={<UserPlus size={16} />}
           >
-            <UserPlus size={16} style={{ marginRight: '6px' }} />
-            Add Patient Profile
+            Add Dependent Profile
           </Button>
           <Button
             variant="primary"
@@ -163,30 +193,15 @@ export function PatientDashboard() {
         <Spinner label="Loading care overview..." />
       ) : (
         <div className="dashboard-content-grid">
-          {/* Managed Patients Selector Bar */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '0.875rem 1.25rem',
-              backgroundColor: '#f8fafc',
-              border: '1px solid #e2e8f0',
-              borderRadius: '0.75rem',
-              marginBottom: '1rem',
-              flexWrap: 'wrap',
-              gap: '0.75rem',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <Users size={20} color="#0284c7" />
+          {/* Active Patient Profile & Switcher Bar */}
+          <div className="patient-profile-bar">
+            <div className="patient-profile-meta">
+              <Users size={20} color="#0284c7" aria-hidden="true" />
               <div>
-                <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b', fontWeight: 600 }}>
-                  Active Patient Profile
-                </span>
-                <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f172a' }}>
-                  {profile?.name || 'Primary Profile'}{' '}
-                  <span style={{ fontWeight: 400, color: '#64748b', fontSize: '0.85rem' }}>
+                <span className="patient-profile-title">Active Patient Profile</span>
+                <div className="patient-profile-name">
+                  {profile?.name || 'Primary Profile'}
+                  <span style={{ fontWeight: 400, color: 'var(--muted)', fontSize: '0.85rem' }}>
                     ({profile?.age ? `${profile.age}y` : ''}{profile?.gender ? ` • ${profile.gender}` : ''})
                   </span>
                 </div>
@@ -194,8 +209,8 @@ export function PatientDashboard() {
             </div>
 
             {myPatients.length > 1 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '0.8rem', color: '#64748b' }}>Switch profile:</span>
+              <div className="patient-switcher-group">
+                <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Switch profile:</span>
                 {myPatients.map((p) => {
                   const isActive = p.id === profile?.id;
                   return (
@@ -203,21 +218,9 @@ export function PatientDashboard() {
                       key={p.id}
                       type="button"
                       onClick={() => setProfile(p)}
-                      style={{
-                        padding: '0.35rem 0.75rem',
-                        fontSize: '0.8rem',
-                        fontWeight: 500,
-                        borderRadius: '0.375rem',
-                        border: isActive ? '1px solid #0284c7' : '1px solid #cbd5e1',
-                        backgroundColor: isActive ? '#e0f2fe' : '#ffffff',
-                        color: isActive ? '#0369a1' : '#334155',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.25rem',
-                      }}
+                      className={`patient-switch-btn ${isActive ? 'active' : ''}`}
                     >
-                      {isActive && <CheckCircle2 size={12} color="#0284c7" />}
+                      {isActive && <CheckCircle2 size={13} color="#0284c7" aria-hidden="true" />}
                       {p.name}
                     </button>
                   );
@@ -226,96 +229,235 @@ export function PatientDashboard() {
             )}
           </div>
 
-          <div className="metrics-summary-row">
-            <Card className="summary-stat-card">
-              <span className="stat-label">Scheduled Visits</span>
-              <strong className="stat-value">
-                {appointments.filter((a) => a.status === 'SCHEDULED').length}
-              </strong>
-              <span className="stat-hint">Active upcoming appointments</span>
-            </Card>
+          {/* 2-Column Responsive Desktop Workstation Layout */}
+          <div className="patient-desktop-layout">
+            {/* Main Primary Care Column */}
+            <div className="patient-column-main">
+              {/* Standardized 4 KPI Summary Cards */}
+              <div className="metrics-summary-row">
+                <Card className="summary-stat-card">
+                  <span className="stat-label">Scheduled Visits</span>
+                  <strong className="stat-value">{scheduledCount}</strong>
+                  <span className="stat-hint">Active upcoming consultations</span>
+                </Card>
 
-            <Card className="summary-stat-card">
-              <span className="stat-label">Patient Type</span>
-              <strong className="stat-value">
-                {profile?.patientType || profile?.patient_type || 'Online'}
-              </strong>
-              <span className="stat-hint">Registered care pathway</span>
-            </Card>
+                <Card className="summary-stat-card">
+                  <span className="stat-label">Completed Encounters</span>
+                  <strong className="stat-value">{completedCount}</strong>
+                  <span className="stat-hint">Past specialist consultations</span>
+                </Card>
 
-            <Card className="summary-stat-card">
-              <span className="stat-label">Completed Consultations</span>
-              <strong className="stat-value">
-                {appointments.filter((a) => a.status === 'COMPLETED').length}
-              </strong>
-              <span className="stat-hint">Past specialist encounters</span>
-            </Card>
-          </div>
+                <Card className="summary-stat-card">
+                  <span className="stat-label">Clinical Orders</span>
+                  <strong className="stat-value">{clinicalRecordsCount}</strong>
+                  <span className="stat-hint">
+                    {prescriptions.length} meds • {reports.length} lab tests
+                  </span>
+                </Card>
 
-          <div className="dashboard-main-section">
-            <Card
-              className="upcoming-visit-card"
-              header={<h3 className="card-heading">Next Scheduled Appointment</h3>}
-            >
-              {nextAppointment ? (
-                <div className="next-apt-details">
-                  <div className="next-apt-info">
-                    <h4>
-                      {nextAppointment.doctorName ||
-                        nextAppointment.doctor_name ||
-                        'Specialist Physician'}
-                    </h4>
-                    <p>
-                      {nextAppointment.doctorDepartment ||
-                        nextAppointment.doctor_department ||
-                        'Hospital Outpatient Department'}
-                    </p>
-                    <span className="next-apt-time">
-                      <Calendar
-                        size={16}
-                        aria-hidden="true"
-                        style={{ display: 'inline-block', verticalAlign: 'text-bottom', marginRight: '6px' }}
-                      />
-                      {new Date(
-                        nextAppointment.startTime || nextAppointment.start_time || ''
-                      ).toLocaleString([], {
-                        dateStyle: 'full',
-                        timeStyle: 'short',
-                      })}
-                    </span>
+                {/* Categorical KPI Hierarchy Fix */}
+                <Card className="summary-stat-card">
+                  <span className="stat-label">Patient Pathway</span>
+                  <div className="stat-badge-value">
+                    <Badge variant={patientType === 'Walkin' ? 'warning' : 'primary'} size="md">
+                      {patientType}
+                    </Badge>
                   </div>
-                  <Badge variant="primary" size="md">
-                    CONFIRMED
-                  </Badge>
-                </div>
-              ) : (
-                <div className="empty-next-apt">
-                  <p>You have no pending consultations scheduled today.</p>
-                  <Button
-                    variant="outline"
-                    onClick={() => navigate('/user/appointments')}
-                  >
-                    Schedule an Appointment
-                  </Button>
-                </div>
-              )}
-            </Card>
+                  <span className="stat-hint">Registered care category</span>
+                </Card>
+              </div>
 
-            <div className="quick-nav-cards">
+              {/* Next Scheduled Appointment Card */}
               <Card
-                className="quick-nav-card"
-                onClick={() => navigate('/user/journey')}
+                className="upcoming-visit-card"
+                header={<h3 className="card-heading">Next Scheduled Consultation</h3>}
               >
-                <h4>Care Journey Timeline <span>→</span></h4>
-                <p>View step-by-step progress from triage to recovery.</p>
+                {nextAppointment ? (
+                  <div className="next-apt-details">
+                    <div className="next-apt-info">
+                      <h4>
+                        {nextAppointment.doctorName ||
+                          nextAppointment.doctor_name ||
+                          'Attending Specialist'}
+                      </h4>
+                      <p>
+                        {nextAppointment.doctorDepartment ||
+                          nextAppointment.doctor_department ||
+                          'Hospital Outpatient Department'}
+                      </p>
+                      <span className="next-apt-time">
+                        <Calendar
+                          size={15}
+                          aria-hidden="true"
+                          style={{ display: 'inline-block', verticalAlign: 'text-bottom', marginRight: '6px' }}
+                        />
+                        {new Date(
+                          nextAppointment.startTime || nextAppointment.start_time || ''
+                        ).toLocaleString([], {
+                          dateStyle: 'full',
+                          timeStyle: 'short',
+                        })}
+                      </span>
+                    </div>
+                    <Badge variant="primary" size="md">
+                      CONFIRMED
+                    </Badge>
+                  </div>
+                ) : (
+                  <EmptyState
+                    icon={Calendar}
+                    title="No upcoming consultations"
+                    description="You have no pending consultations scheduled. Choose a physician from our hospital specialist directory."
+                    action={
+                      <Button
+                        variant="primary"
+                        onClick={() => navigate('/user/appointments')}
+                      >
+                        Book an Appointment
+                      </Button>
+                    }
+                  />
+                )}
               </Card>
 
+              {/* Fast Care Pathways */}
+              <div className="quick-nav-cards">
+                <Card
+                  className="quick-nav-card"
+                  onClick={() => navigate('/user/journey')}
+                >
+                  <h4 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    Care Journey Timeline <ArrowRight size={16} aria-hidden="true" />
+                  </h4>
+                  <p>Track your stage-by-stage progression from triage to recovery.</p>
+                </Card>
+
+                <Card
+                  className="quick-nav-card"
+                  onClick={() => navigate('/user/records')}
+                >
+                  <h4 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    Medical Records & Tests <ArrowRight size={16} aria-hidden="true" />
+                  </h4>
+                  <p>Inspect diagnostic lab reports, clinical findings, and orders.</p>
+                </Card>
+              </div>
+            </div>
+
+            {/* Side Clinical Overview Column */}
+            <div className="patient-column-side">
+              {/* Prescriptions Preview Card */}
               <Card
-                className="quick-nav-card"
-                onClick={() => navigate('/user/records')}
+                header={
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3 className="card-heading" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+                      <Pill size={17} color="#165b53" aria-hidden="true" />
+                      Active Prescriptions ({prescriptions.length})
+                    </h3>
+                    {prescriptions.length > 0 && (
+                      <button
+                        type="button"
+                        className="table-link-btn"
+                        onClick={() => navigate('/user/records')}
+                      >
+                        View all →
+                      </button>
+                    )}
+                  </div>
+                }
               >
-                <h4>Prescriptions & Diagnostics <span>→</span></h4>
-                <p>Access doctor prescriptions and laboratory orders.</p>
+                {prescriptions.length === 0 ? (
+                  <EmptyState
+                    icon={Pill}
+                    title="No active medications"
+                    description="Medications prescribed during doctor consultations will appear here automatically."
+                  />
+                ) : (
+                  <div className="patient-mini-list">
+                    {prescriptions.slice(0, 3).map((rx) => (
+                      <div key={rx.id} className="patient-mini-card">
+                        <div className="patient-mini-header">
+                          <strong className="patient-mini-title">{rx.medication}</strong>
+                          <Badge variant="primary" size="sm">
+                            {rx.dosage}
+                          </Badge>
+                        </div>
+                        <p className="patient-mini-sub">
+                          {rx.frequency ? `Frequency: ${rx.frequency}` : ''}
+                          {rx.duration ? ` • Duration: ${rx.duration}` : ''}
+                        </p>
+                        {rx.doctorName && (
+                          <span className="cell-meta" style={{ fontSize: '11px' }}>
+                            Prescribed by Dr. {rx.doctorName}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Card>
+
+              {/* Diagnostic Reports Preview Card */}
+              <Card
+                header={
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3 className="card-heading" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+                      <Microscope size={17} color="#165b53" aria-hidden="true" />
+                      Diagnostic Reports ({reports.length})
+                    </h3>
+                    {reports.length > 0 && (
+                      <button
+                        type="button"
+                        className="table-link-btn"
+                        onClick={() => navigate('/user/records')}
+                      >
+                        View all →
+                      </button>
+                    )}
+                  </div>
+                }
+              >
+                {reports.length === 0 ? (
+                  <EmptyState
+                    icon={Microscope}
+                    title="No diagnostic tests recorded"
+                    description="Laboratory investigations and pathology findings will be listed here once ordered."
+                  />
+                ) : (
+                  <div className="patient-mini-list">
+                    {reports.slice(0, 3).map((rep) => (
+                      <div key={rep.id} className="patient-mini-card">
+                        <div className="patient-mini-header">
+                          <strong className="patient-mini-title">{rep.testName || rep.test_name}</strong>
+                          <Badge
+                            variant={rep.status === 'COMPLETED' ? 'success' : 'warning'}
+                            size="sm"
+                          >
+                            {rep.status}
+                          </Badge>
+                        </div>
+                        {rep.result ? (
+                          <p className="patient-mini-sub" style={{ color: 'var(--ink)' }}>
+                            {rep.result.length > 60 ? `${rep.result.slice(0, 60)}...` : rep.result}
+                          </p>
+                        ) : (
+                          <p className="patient-mini-sub" style={{ fontStyle: 'italic' }}>
+                            Specimen processing / awaiting report
+                          </p>
+                        )}
+                        <span className="cell-meta" style={{ fontSize: '11px' }}>
+                          {rep.createdAt || rep.created_at
+                            ? new Date(rep.createdAt || rep.created_at || '').toLocaleDateString([], {
+                                month: 'short',
+                                day: 'numeric',
+                              })
+                            : ''}
+                          {rep.doctorName ? ` • Dr. ${rep.doctorName}` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </Card>
             </div>
           </div>

@@ -5,7 +5,6 @@ import {
   CheckCircle2,
   RefreshCw,
   Search,
-  Clock,
   FileEdit,
 } from 'lucide-react';
 import { Card } from '../../components/common/Card';
@@ -15,6 +14,7 @@ import { Input } from '../../components/common/Input';
 import { Modal } from '../../components/common/Modal';
 import { Alert } from '../../components/common/Alert';
 import { Spinner } from '../../components/common/Spinner';
+import { EmptyState } from '../../components/common/EmptyState';
 import { staffService } from '../../services/staff.service';
 import type { LabOrderItem } from '../../types/staff.types';
 
@@ -154,6 +154,10 @@ export function LabTechPanel() {
     }
   };
 
+  const pendingCount = orders.filter((o) => o.status === 'PENDING').length;
+  const collectedCount = orders.filter((o) => o.status === 'SAMPLE_COLLECTED').length;
+  const inProgressCount = orders.filter((o) => o.status === 'IN_PROGRESS').length;
+  const completedCount = orders.filter((o) => o.status === 'COMPLETED').length;
   const activeQueueCount = orders.filter(
     (o) => o.status !== 'COMPLETED' && o.status !== 'CANCELLED'
   ).length;
@@ -167,142 +171,170 @@ export function LabTechPanel() {
       )}
 
       {successMessage && (
-        <Alert type="success" className="mb-4">
+        <Alert type="success" className="mb-4" onClose={() => setSuccessMessage(null)}>
           {successMessage}
         </Alert>
       )}
 
-      {/* Summary Cards */}
-      <div className="metrics-summary-row mb-6" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+      {/* Workspace Header */}
+      <div className="station-header">
+        <div className="station-header-info">
+          <h3>
+            <FlaskConical size={20} aria-hidden="true" />
+            Diagnostic Laboratory Bench
+          </h3>
+          <p>Specimen collection, diagnostic test processing, and clinical report publication</p>
+        </div>
+
+        <div className="station-header-actions">
+          <Button
+            variant="outline"
+            onClick={loadOrders}
+            loading={loading}
+            icon={<RefreshCw size={16} />}
+          >
+            Refresh Worklist
+          </Button>
+        </div>
+      </div>
+
+      {/* KPI Summary Cards (Section 12) */}
+      <div className="metrics-summary-row mb-6">
         <Card className="summary-stat-card">
-          <span className="stat-label">Pending / Processing Orders</span>
-          <strong className="stat-value">{activeQueueCount}</strong>
-          <span className="stat-hint">Active laboratory tasks</span>
+          <span className="stat-label">Orders Pending</span>
+          <strong className="stat-value">{pendingCount}</strong>
+          <span className="stat-hint">Awaiting specimen collection</span>
         </Card>
 
         <Card className="summary-stat-card">
-          <span className="stat-label">Diagnostic Laboratory</span>
-          <strong className="stat-value text-base">Core Pathology & Diagnostics</strong>
-          <span className="stat-hint">Specimen processing & results</span>
+          <span className="stat-label">Samples Collected</span>
+          <strong className="stat-value">{collectedCount}</strong>
+          <span className="stat-hint">Specimens logged at bench</span>
+        </Card>
+
+        <Card className="summary-stat-card">
+          <span className="stat-label">Processing / Active</span>
+          <strong className="stat-value">{inProgressCount}</strong>
+          <span className="stat-hint">Tests currently undergoing analysis</span>
+        </Card>
+
+        <Card className="summary-stat-card">
+          <span className="stat-label">Reports Completed</span>
+          <strong className="stat-value">{completedCount}</strong>
+          <span className="stat-hint">Results published to clinical chart</span>
         </Card>
       </div>
 
       {/* Main Orders Card */}
       <Card>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-          <div>
-            <h3 className="section-title" style={{ margin: 0 }}>
-              Investigation & Lab Diagnostic Orders
+        <div className="station-header" style={{ marginBottom: '14px' }}>
+          <div className="station-header-info">
+            <h3 style={{ fontSize: '18px' }}>
+              Laboratory Orders Worklist ({filteredOrders.length})
             </h3>
-            <p className="text-secondary text-sm" style={{ margin: 0 }}>
-              Process tests, record diagnostic findings, and publish laboratory results.
-            </p>
-          </div>
-
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <Button
-              variant={statusFilter === 'PENDING_QUEUE' ? 'primary' : 'outline'}
-              onClick={() => setStatusFilter('PENDING_QUEUE')}
-            >
-              Active Queue ({activeQueueCount})
-            </Button>
-            <Button
-              variant={statusFilter === 'COMPLETED' ? 'primary' : 'outline'}
-              onClick={() => setStatusFilter('COMPLETED')}
-            >
-              Completed Tests
-            </Button>
-            <Button
-              variant={statusFilter === 'ALL' ? 'primary' : 'outline'}
-              onClick={() => setStatusFilter('ALL')}
-            >
-              All Orders ({orders.length})
-            </Button>
-            <Button
-              variant="outline"
-              onClick={loadOrders}
-              loading={loading}
-              icon={<RefreshCw size={16} />}
-            >
-              Refresh
-            </Button>
+            <p>Process investigations and record verified findings</p>
           </div>
         </div>
 
-        {/* Search Input */}
-        <div style={{ marginBottom: '1rem', maxWidth: '380px' }}>
-          <Input
-            placeholder="Search by test name, patient, or doctor..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            leftIcon={<Search size={16} />}
-          />
+        {/* Filter Bar */}
+        <div className="station-filter-bar">
+          <div className="station-search-box">
+            <Input
+              placeholder="Search by test name, patient, or doctor..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              leftIcon={<Search size={16} />}
+            />
+          </div>
+
+          <div className="filter-tabs" role="tablist" aria-label="Laboratory order status filter">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={statusFilter === 'PENDING_QUEUE'}
+              className={`filter-tab-btn ${statusFilter === 'PENDING_QUEUE' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('PENDING_QUEUE')}
+            >
+              Active Queue ({activeQueueCount})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={statusFilter === 'COMPLETED'}
+              className={`filter-tab-btn ${statusFilter === 'COMPLETED' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('COMPLETED')}
+            >
+              Completed ({completedCount})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={statusFilter === 'ALL'}
+              className={`filter-tab-btn ${statusFilter === 'ALL' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('ALL')}
+            >
+              All Orders ({orders.length})
+            </button>
+          </div>
         </div>
 
         {loading ? (
           <Spinner label="Loading diagnostic orders..." />
         ) : filteredOrders.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--text-secondary, #64748b)' }}>
-            <Clock size={36} style={{ margin: '0 auto 0.75rem', opacity: 0.5 }} />
-            <p style={{ margin: 0, fontWeight: 500 }}>No investigation orders found.</p>
-            <p className="text-xs" style={{ margin: '0.25rem 0 0' }}>
-              When doctors place lab orders during consultations, they will appear here.
-            </p>
-          </div>
+          <EmptyState
+            icon={FlaskConical}
+            title="No laboratory orders found"
+            description="No lab orders match the selected filter. Test orders placed by physicians will appear here automatically."
+          />
         ) : (
           <div className="table-responsive">
-            <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <table className="data-table">
               <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-color, #e2e8f0)' }}>
-                  <th style={{ padding: '0.75rem' }}>Test Name</th>
-                  <th style={{ padding: '0.75rem' }}>Patient Name</th>
-                  <th style={{ padding: '0.75rem' }}>Ordering Doctor</th>
-                  <th style={{ padding: '0.75rem' }}>Status</th>
-                  <th style={{ padding: '0.75rem' }}>Result Summary</th>
-                  <th style={{ padding: '0.75rem' }}>Ordered At</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right' }}>Actions</th>
+                <tr>
+                  <th>Test Name</th>
+                  <th>Patient Name</th>
+                  <th>Ordering Doctor</th>
+                  <th>Status</th>
+                  <th>Result Summary</th>
+                  <th>Ordered At</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredOrders.map((order) => (
-                  <tr
-                    key={order.id}
-                    style={{ borderBottom: '1px solid var(--border-color, #f1f5f9)' }}
-                  >
-                    <td style={{ padding: '0.75rem' }}>
+                  <tr key={order.id}>
+                    <td>
                       <strong style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                        <FlaskConical size={15} color="var(--primary-color, #0284c7)" />
+                        <FlaskConical size={15} color="#165b53" aria-hidden="true" />
                         {order.test_name}
                       </strong>
                       {order.instructions && (
-                        <span className="text-secondary text-xs" style={{ display: 'block', marginTop: '2px' }}>
+                        <span className="cell-meta" style={{ display: 'block', marginTop: '2px' }}>
                           Instructions: {order.instructions}
                         </span>
                       )}
                     </td>
-                    <td style={{ padding: '0.75rem' }}>
-                      <strong>{order.patient_name || 'Patient'}</strong>
-                    </td>
-                    <td style={{ padding: '0.75rem' }}>
+                    <td className="cell-name">{order.patient_name || 'Patient'}</td>
+                    <td className="cell-meta">
                       {order.doctor_name ? `Dr. ${order.doctor_name}` : 'Attending Doctor'}
                     </td>
-                    <td style={{ padding: '0.75rem' }}>
+                    <td>
                       <Badge variant={getStatusBadgeVariant(order.status)} size="sm">
                         {order.status}
                       </Badge>
                     </td>
-                    <td style={{ padding: '0.75rem', maxWidth: '240px' }}>
+                    <td style={{ maxWidth: '240px' }}>
                       {order.result ? (
-                        <span style={{ fontSize: '0.85rem', color: 'var(--text-primary, #1e293b)' }}>
+                        <span className="cell-meta" style={{ color: 'var(--ink)' }}>
                           {order.result.length > 50 ? `${order.result.slice(0, 50)}...` : order.result}
                         </span>
                       ) : (
-                        <span className="text-secondary text-xs" style={{ fontStyle: 'italic' }}>
+                        <span className="cell-meta" style={{ fontStyle: 'italic' }}>
                           No result recorded
                         </span>
                       )}
                     </td>
-                    <td style={{ padding: '0.75rem', fontSize: '0.85rem', color: 'var(--text-secondary, #64748b)' }}>
+                    <td className="cell-meta">
                       {new Date(order.created_at).toLocaleString([], {
                         month: 'short',
                         day: 'numeric',
@@ -310,9 +342,10 @@ export function LabTechPanel() {
                         minute: '2-digit',
                       })}
                     </td>
-                    <td style={{ padding: '0.75rem', textAlign: 'right' }}>
+                    <td className="cell-actions">
                       <Button
                         variant={order.status === 'COMPLETED' ? 'outline' : 'primary'}
+                        size="sm"
                         onClick={() => openUpdateModal(order)}
                         icon={<FileEdit size={14} />}
                       >
