@@ -20,6 +20,9 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use("/nosleep", function (req, res) {
+  res.send("OK");
+});
 app.use("/admin", adminRoute);
 app.use("/auth", authRoute);
 app.use("/patients", patientsRoute);
